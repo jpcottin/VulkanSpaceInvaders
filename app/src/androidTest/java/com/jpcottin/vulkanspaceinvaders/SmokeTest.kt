@@ -49,7 +49,9 @@ class SmokeTest {
         // device without crashing (it just renders nothing). Assert the
         // renderer actually brought a swapchain up, so a dead render path
         // fails the test instead of producing silent black screenshots.
-        val log = shell("logcat -d -s SpaceInvaders:I SpaceInvaders:E")
+        // Note: a single filterspec — a second one for the same tag would
+        // override the first (":I" already includes warnings and errors).
+        val log = shell("logcat -d -s SpaceInvaders:I")
         assertTrue(
             "Renderer never reached 'Swapchain ready' — Vulkan log was:\n" +
                 log.lines().takeLast(20).joinToString("\n"),
