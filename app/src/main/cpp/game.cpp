@@ -56,6 +56,18 @@ static const int kAlienScore[3] = {30, 20, 10};
 static const int kSaucerScore   = 100;
 static const int kPowerUpScore  = 25;
 static const int kLevelClearScore = 100;
+static const int kBossScore     = 250;   // x level (2500 at level 10)
+
+// Level-10 boss mothership: drifts sinusoidally across the top, above its
+// two-row escort wave, lobbing bombs aimed at the player.
+static const int   kBossHP      = 16;
+static const float kBossY       = -0.80f;
+static const float kBossHW      = 0.150f;  // half-width
+static const float kBossHH      = 0.072f;  // half-height
+static const float kBossBombInterval = 1.15f;
+
+// Triple-shot side lasers leave at ±8° off vertical.
+static const float kTripleAngle = 8.0f * 3.14159265f / 180.0f;
 
 // 7-segment masks for digits 0..9 (bit a=1,b=2,c=4,d=8,e=16,f=32,g=64).
 static const int kDigitSeg[10] = {63, 6, 91, 79, 102, 109, 125, 7, 127, 111};
@@ -283,7 +295,8 @@ static Game::AlienType rowType(int row, int rows) {
 }
 
 void Game::buildFormation() {
-    rows_ = rowsForLevel(level_);
+    // Level 10 is the boss fight: the mothership only brings a two-row escort.
+    rows_ = (level_ == 10) ? 2 : rowsForLevel(level_);
     aliens_.clear();
     aliens_.reserve((size_t)rows_ * kCols);
     for (int r = 0; r < rows_; r++)
@@ -324,7 +337,8 @@ void Game::startGame() {
     newHighScore_     = false;
     newHighScoreRank_ = -1;
     shieldActive_ = false;
-    rapidActive_  = false; rapidTimer_ = 0.0f;
+    rapidActive_  = false; rapidTimer_  = 0.0f;
+    tripleActive_ = false; tripleTimer_ = 0.0f;
     bonusFlashTimer_ = 0.0f;
     level_ = 1;
     if (audio_) audio_->setMusicEnabled(soundEnabled_);
@@ -342,6 +356,13 @@ void Game::startLevel(int level) {
     saucer_ = {};
     saucerTimer_ = frange(10.0f, 16.0f);
     bombTimer_   = 1.5f;
+    boss_ = {};
+    bossActive_ = (level_ == 10);
+    if (bossActive_) {
+        boss_.hp = boss_.maxHp = kBossHP;
+        boss_.alive = true;
+    }
+    bossBombTimer_ = 2.0f;
     shipX_ = 0.0f;
     shipTilt_ = 0.0f;
     fireCooldown_ = 0.0f;
@@ -358,7 +379,8 @@ void Game::spawnPowerUp(float x, float y) {
     p.vy   = 0.30f;
     p.rot  = 0.0f;
     p.spin = frange(-2.5f, 2.5f);
-    p.type  = frand() < 0.5f ? PU_SHIELD : PU_RAPID;
+    float roll = frand();
+    p.type  = roll < 0.34f ? PU_SHIELD : (roll < 0.67f ? PU_RAPID : PU_TRIPLE);
     p.alive = true;
     powerUps_.push_back(p);
 }
@@ -449,6 +471,7 @@ void Game::update(float dt) {
             // mid-sequence; later steps still run and re-check as needed.
             updateShip(dt);
             updateFormation(dt);
+            updateBoss(dt);
             updateBombs(dt);
             updateBullets(dt);
             updateSaucer(dt);
@@ -623,6 +646,32 @@ void Game::updateFormation(float dt) {
     }
 }
 
+void Game::updateBoss(float dt) {
+    if (!bossActive_ || !boss_.alive) return;
+    boss_.t += dt;
+    boss_.x  = sinf(boss_.t * 0.60f) * (asp_ - kBossHW - 0.05f);
+
+    // Aimed bombs: lobbed toward where the player currently is.
+    bossBombTimer_ -= dt;
+    if (bossBombTimer_ <= 0.0f) {
+        bossBombTimer_ = kBossBombInterval * frange(0.8f, 1.2f);
+        Bomb b;
+        b.x = boss_.x;
+        b.y = kBossY + kBossHH + 0.02f;
+        b.vy = levelBombSpeed(level_) * 1.25f;
+        float dx = shipX_ - boss_.x;
+        float tReach = (shipY_ - b.y) / b.vy;
+        float vx = dx / (tReach > 0.3f ? tReach : 0.3f);
+        // Cap the lateral speed so bombs stay dodgeable.
+        if (vx >  0.45f) vx =  0.45f;
+        if (vx < -0.45f) vx = -0.45f;
+        b.vx = vx;
+        b.wobble = frange(0.0f, 6.28f);
+        b.alive = true;
+        bombs_.push_back(b);
+    }
+}
+
 void Game::dropBomb() {
     // Bottom-most alive alien of a random occupied column fires (classic).
     int cols[kCols], nCols = 0;
@@ -640,6 +689,7 @@ void Game::dropBomb() {
     Bomb b;
     b.x = alienX(*shooter);
     b.y = alienY(*shooter) + kAlienHH + 0.01f;
+    b.vx = 0.0f;
     b.vy = levelBombSpeed(level_) * frange(0.9f, 1.1f);
     b.wobble = frange(0.0f, 6.28f);
     b.alive = true;
@@ -655,9 +705,12 @@ void Game::updateBombs(float dt) {
 
     for (auto& b : bombs_) {
         if (!b.alive) continue;
+        b.x += b.vx * dt;
         b.y += b.vy * dt;
         b.wobble += 6.0f * dt;
-        if (b.y > 1.05f) { b.alive = false; continue; }
+        if (b.y > 1.05f || b.x > asp_ + 0.1f || b.x < -asp_ - 0.1f) {
+            b.alive = false; continue;
+        }
         if (invuln_ <= 0.0f && state_ == PLAYING) {
             float dx = b.x - shipX_, dy = b.y - shipY_;
             float rad = shipR_ + 0.012f;
@@ -686,23 +739,35 @@ void Game::killAlien(Alien& a) {
 }
 
 void Game::updateBullets(float dt) {
-    // Fire while the trigger is held; rapid power-up shortens the cooldown.
+    // Fire while the trigger is held; rapid power-up shortens the cooldown and
+    // the triple power-up adds two side lasers at ±8°.
     if (fireCooldown_ > 0.0f) fireCooldown_ -= dt;
     if (fireHeld() && fireCooldown_ <= 0.0f && bulletCount() < kMaxPlayerBullets) {
-        Bullet b;
-        b.x = shipX_;
-        b.y = shipY_ - shipScale_ * 1.1f;
-        b.vy = -kBulletSpeed;
-        b.alive = true;
-        bullets_.push_back(b);
+        auto fireLaser = [&](float angle) {
+            Bullet b;
+            b.x = shipX_;
+            b.y = shipY_ - shipScale_ * 1.1f;
+            b.vx =  kBulletSpeed * sinf(angle);
+            b.vy = -kBulletSpeed * cosf(angle);
+            b.alive = true;
+            bullets_.push_back(b);
+        };
+        fireLaser(0.0f);
+        if (tripleActive_) {
+            fireLaser(-kTripleAngle);
+            fireLaser( kTripleAngle);
+        }
         fireCooldown_ = rapidActive_ ? kRapidCooldown : kFireCooldown;
         if (audio_ && soundEnabled_) audio_->triggerLaser();
     }
 
     for (auto& b : bullets_) {
         if (!b.alive) continue;
+        b.x += b.vx * dt;
         b.y += b.vy * dt;
-        if (b.y < -1.05f) { b.alive = false; continue; }
+        if (b.y < -1.05f || b.x > asp_ + 0.1f || b.x < -asp_ - 0.1f) {
+            b.alive = false; continue;
+        }
 
         // Bullet vs bomb: shooting down an incoming bomb cancels both.
         for (auto& bomb : bombs_) {
@@ -720,6 +785,39 @@ void Game::updateBullets(float dt) {
             }
         }
         if (!b.alive) continue;
+
+        // Bullet vs boss mothership
+        if (bossActive_ && boss_.alive &&
+            fabsf(b.x - boss_.x) < kBossHW + 0.010f &&
+            fabsf(b.y - kBossY) < kBossHH + 0.016f) {
+            b.alive = false;
+            boss_.hp--;
+            Explosion hitFlash;
+            hitFlash.x = b.x; hitFlash.y = kBossY + kBossHH;
+            hitFlash.radius = 0.035f;
+            hitFlash.t = 0.0f; hitFlash.maxLife = 0.12f;
+            hitFlash.cr = 1.0f; hitFlash.cg = 0.6f; hitFlash.cb = 0.1f;
+            hitFlash.alive = true;
+            explosions_.push_back(hitFlash);
+            if (boss_.hp <= 0) {
+                boss_.alive = false;
+                long bonus = (long)kBossScore * level_;
+                score_ += bonus;
+                bonusFlash_ = bonus;
+                bonusFlashTimer_ = 0.9f;
+                bonusFlashX_ = boss_.x; bonusFlashY_ = kBossY;
+                spawnDebris(boss_.x, kBossY, kBossHW,        1.00f, 0.35f, 0.55f);
+                spawnDebris(boss_.x, kBossY, kBossHW * 0.6f, 0.85f, 0.25f, 0.75f);
+                if (audio_) audio_->setSaucer(false);
+                if (audio_ && soundEnabled_) {
+                    audio_->triggerExplosion();
+                    audio_->triggerLevelClear();
+                }
+                state_ = WIN; stateTimer_ = 0.0f;
+                checkHighScore();
+            }
+            continue;
+        }
 
         // Bullet vs saucer
         if (saucer_.alive &&
@@ -752,8 +850,9 @@ void Game::updateBullets(float dt) {
 
 void Game::updateSaucer(float dt) {
     if (!saucer_.alive) {
-        // Only tease the saucer while a wave is still up.
-        if (aliveAliens() > 0) {
+        // Only tease the saucer while a wave is up — and never during the boss
+        // fight, whose mothership owns the top of the screen.
+        if (aliveAliens() > 0 && !bossActive_) {
             saucerTimer_ -= dt;
             if (saucerTimer_ <= 0.0f) {
                 spawnSaucer();
@@ -773,6 +872,10 @@ void Game::updatePowerUps(float dt) {
         rapidTimer_ -= dt;
         if (rapidTimer_ <= 0.0f) rapidActive_ = false;
     }
+    if (tripleActive_) {
+        tripleTimer_ -= dt;
+        if (tripleTimer_ <= 0.0f) tripleActive_ = false;
+    }
 
     float puR = 0.045f;
     for (auto& pu : powerUps_) {
@@ -788,8 +891,9 @@ void Game::updatePowerUps(float dt) {
             bonusFlash_ = bonus;
             bonusFlashTimer_ = 0.9f;
             bonusFlashX_ = pu.x; bonusFlashY_ = pu.y - 0.06f;
-            if (pu.type == PU_SHIELD) shieldActive_ = true;
-            else { rapidActive_ = true; rapidTimer_ = kRapidDuration; }
+            if (pu.type == PU_SHIELD)      shieldActive_ = true;
+            else if (pu.type == PU_RAPID)  { rapidActive_  = true; rapidTimer_  = kRapidDuration; }
+            else                           { tripleActive_ = true; tripleTimer_ = kRapidDuration; }
             if (audio_ && soundEnabled_) audio_->triggerPowerUp();
         }
     }
@@ -807,6 +911,9 @@ void Game::removeDeadEntities() {
 
 void Game::checkLevelClear() {
     if (state_ != PLAYING || aliveAliens() > 0) return;
+    // The boss level only ends when the mothership dies (handled in
+    // updateBullets, which jumps straight to WIN).
+    if (bossActive_ && boss_.alive) return;
     score_ += (long)kLevelClearScore * level_;
     if (audio_) audio_->setSaucer(false);
     if (audio_ && soundEnabled_) audio_->triggerLevelClear();
@@ -823,27 +930,35 @@ void Game::checkLevelClear() {
 // Priorities: dodge incoming bombs > collect a power-up > hunt the saucer >
 // line up on the nearest invader column.
 void Game::updateAutoPlay(float dt) {
-    const float kAlignThresh = 0.030f;
+    // Triple shot covers a wider cone, so alignment can be looser.
+    const float kAlignThresh = tripleActive_ ? 0.10f : 0.030f;
 
     // 1) Threat scan: the bomb that will reach our altitude soonest and lands
-    //    close enough to matter.
+    //    close enough to matter (boss bombs drift sideways — predict impact x).
     const Bomb* threat = nullptr;
-    float threatT = 1e9f;
+    float threatT = 1e9f, threatX = 0.0f;
     for (auto& b : bombs_) {
         if (!b.alive || b.vy <= 0.0f) continue;
         float tHit = (shipY_ - b.y) / b.vy;
         if (tHit < 0.0f || tHit > 0.9f) continue;
-        if (fabsf(b.x - shipX_) < 0.11f && tHit < threatT) {
+        float impactX = b.x + b.vx * tHit;
+        if (fabsf(impactX - shipX_) < 0.11f && tHit < threatT) {
             threatT = tHit;
+            threatX = impactX;
             threat = &b;
         }
     }
 
-    // 2) Best shoot target: lead the saucer if it's up, else the alien column
-    //    whose x is nearest (with a small lead for the marching motion).
+    // 2) Best shoot target: the boss (lead-aimed on its sine drift) outranks
+    //    the saucer, which outranks the nearest alien column.
     bool  hasTarget = false;
     float targetX   = 0.0f;
-    if (saucer_.alive) {
+    if (bossActive_ && boss_.alive) {
+        float tFly = (shipY_ - kBossY) / kBulletSpeed;
+        targetX = sinf((boss_.t + tFly) * 0.60f) * (asp_ - kBossHW - 0.05f);
+        hasTarget = true;
+    }
+    if (!hasTarget && saucer_.alive) {
         float tFly = (shipY_ - saucer_.y) / kBulletSpeed;
         float aim  = saucer_.x + saucer_.vx * tFly;
         if (fabsf(aim) < asp_ - shipScale_) { targetX = aim; hasTarget = true; }
@@ -878,7 +993,7 @@ void Game::updateAutoPlay(float dt) {
 
     // Steering priority: dodge > collect > align.
     if (threat) {
-        float dir = (threat->x >= shipX_) ? -1.0f : 1.0f;
+        float dir = (threatX >= shipX_) ? -1.0f : 1.0f;
         float target = shipX_ + dir * 0.24f;
         float lim = asp_ - shipScale_;
         if (target > lim || target < -lim) target = shipX_ - dir * 0.24f;
@@ -1054,7 +1169,7 @@ void Game::drawAlien(std::vector<DrawCmd>& out, const Alien& a, float cx, float 
 
 void Game::drawPowerUpHUD(std::vector<DrawCmd>& out) {
     // Left-side HUD: active bonus indicators. Shield has no timer (it lasts
-    // until hit); rapid fire shows its remaining time as a bar.
+    // until hit); rapid fire and triple shot show remaining time as a bar.
     float iconX = -asp_ + 0.055f;
     float barX0 = -asp_ + 0.095f;
     float barMaxW = 0.16f;
@@ -1065,19 +1180,35 @@ void Game::drawPowerUpHUD(std::vector<DrawCmd>& out) {
              0.30f, 0.55f, 1.00f, pulse);
         row++;
     }
-    if (rapidActive_) {
+    auto timedRow = [&](float timer, float cr, float cg, float cb) {
         float y = -0.70f + row * 0.11f;
-        float progress = rapidTimer_ / kRapidDuration;
-        float pulse = (rapidTimer_ < 2.0f) ? (0.5f + 0.5f * sinf(animTime_ * 18.0f)) : 1.0f;
-        emit(out, SHAPE_QUAD, iconX, y, 0.020f, 0.020f, 0.785f,
-             1.00f, 0.85f, 0.10f, pulse);
+        float progress = timer / kRapidDuration;
+        float pulse = (timer < 2.0f) ? (0.5f + 0.5f * sinf(animTime_ * 18.0f)) : 1.0f;
+        emit(out, SHAPE_QUAD, iconX, y, 0.020f, 0.020f, 0.785f, cr, cg, cb, pulse);
         emit(out, SHAPE_QUAD, barX0 + barMaxW * 0.5f, y, barMaxW * 0.5f, 0.006f, 0.0f,
-             0.30f, 0.26f, 0.03f, 0.5f);
+             cr * 0.3f, cg * 0.3f, cb * 0.3f, 0.5f);
         float fillW = barMaxW * progress;
         if (fillW > 0.002f)
             emit(out, SHAPE_QUAD, barX0 + fillW * 0.5f, y, fillW * 0.5f, 0.006f, 0.0f,
-                 1.00f, 0.85f, 0.10f, 0.85f);
-    }
+                 cr, cg, cb, 0.85f);
+        row++;
+    };
+    if (rapidActive_)  timedRow(rapidTimer_,  1.00f, 0.85f, 0.10f);
+    if (tripleActive_) timedRow(tripleTimer_, 0.25f, 1.00f, 0.40f);
+}
+
+void Game::drawBossHealthBar(std::vector<DrawCmd>& out) {
+    if (!bossActive_ || !boss_.alive) return;
+    float progress = (float)boss_.hp / (float)boss_.maxHp;
+    float barW = asp_ * 0.80f;
+    // Sits in the gap between the mothership's flight line and its escort rows.
+    float y    = -0.66f;
+    // Background
+    emit(out, SHAPE_QUAD, 0.0f, y, barW, 0.010f, 0.0f, 0.25f, 0.05f, 0.10f, 0.7f);
+    // Fill (magenta → red as health drops)
+    float fr = 1.0f, fg = 0.15f, fb = 0.25f + 0.45f * progress;
+    emit(out, SHAPE_QUAD, -barW + barW * progress, y, barW * progress, 0.010f, 0.0f, fr, fg, fb, 0.9f);
+    drawText(out, "BOSS", 0.0f, y + 0.040f, 0.032f, fr, fg, fb, 0.85f);
 }
 
 // The touch strip below the ship: a faint backdrop, a divider line, and a
@@ -1178,6 +1309,17 @@ void Game::render(std::vector<DrawCmd>& out) {
         drawAlien(out, a, alienX(a), alienY(a) + waveShiftY, waveAlpha);
     }
 
+    // Boss mothership: a giant saucer sprite with an angry pulsing aura.
+    if (bossActive_ && boss_.alive &&
+        (state_ == PLAYING || state_ == LEVEL_CLEAR || state_ == SETTINGS)) {
+        float bpulse = 0.25f + 0.15f * sinf(animTime_ * 5.0f);
+        float hurt = 1.0f - (float)boss_.hp / (float)boss_.maxHp;  // redder as it weakens
+        emit(out, SHAPE_DISC, boss_.x, kBossY, kBossHW * 1.5f, kBossHH * 2.2f, 0.0f,
+             1.00f, 0.20f, 0.55f, bpulse, (float)STYLE_GLOW);
+        emit(out, SHAPE_SAUCER, boss_.x, kBossY, kBossHW, kBossHH, 0.0f,
+             0.80f + 0.20f * hurt, 0.30f - 0.10f * hurt, 0.70f - 0.30f * hurt, 1.0f);
+    }
+
     // Saucer: pixel sprite plus a pulsing glow so it reads as the bonus target.
     if (saucer_.alive) {
         float pulse = 0.30f + 0.15f * sinf(animTime_ * 9.0f);
@@ -1191,8 +1333,9 @@ void Game::render(std::vector<DrawCmd>& out) {
     for (auto& pu : powerUps_) {
         if (!pu.alive) continue;
         float pr, pg, pb;
-        if (pu.type == PU_SHIELD) { pr=0.30f; pg=0.55f; pb=1.00f; }
-        else                      { pr=1.00f; pg=0.85f; pb=0.10f; }
+        if      (pu.type == PU_SHIELD) { pr=0.30f; pg=0.55f; pb=1.00f; }
+        else if (pu.type == PU_RAPID)  { pr=1.00f; pg=0.85f; pb=0.10f; }
+        else                           { pr=0.25f; pg=1.00f; pb=0.40f; }
         float sz   = 0.035f;
         float glow = sz * (1.35f + 0.20f * sinf(animTime_ * 5.0f));
         emit(out, SHAPE_QUAD, pu.x, pu.y, glow, glow, pu.rot,      pr,   pg,   pb,   0.28f);
@@ -1200,11 +1343,13 @@ void Game::render(std::vector<DrawCmd>& out) {
         emit(out, SHAPE_QUAD, pu.x, pu.y, sz*0.38f, sz*0.38f, pu.rot + 0.785f, 1.0f, 1.0f, 1.0f, 0.85f);
     }
 
-    // player lasers: two-layer bolt (outer glow + bright core)
+    // player lasers: two-layer bolt (outer glow + bright core), tilted along
+    // their flight path for triple-shot side lasers
     for (auto& b : bullets_) {
         if (!b.alive) continue;
-        emit(out, SHAPE_QUAD, b.x, b.y, 0.018f, 0.034f, 0.0f, 0.40f, 0.85f, 1.00f, 0.45f);
-        emit(out, SHAPE_QUAD, b.x, b.y, 0.008f, 0.025f, 0.0f, 1.00f, 1.00f, 0.80f, 1.00f);
+        float rot = b.vx != 0.0f ? atan2f(b.vx, -b.vy) : 0.0f;
+        emit(out, SHAPE_QUAD, b.x, b.y, 0.018f, 0.034f, rot, 0.40f, 0.85f, 1.00f, 0.45f);
+        emit(out, SHAPE_QUAD, b.x, b.y, 0.008f, 0.025f, rot, 1.00f, 1.00f, 0.80f, 1.00f);
     }
 
     // alien bombs: red bolt, wobbling like the classic zig-zag shot
@@ -1280,6 +1425,7 @@ void Game::render(std::vector<DrawCmd>& out) {
             drawShip(out, startX + i * gap, -0.90f, ls, 0.0f, 1.0f);
 
         drawPowerUpHUD(out);
+        drawBossHealthBar(out);
         shakeX_ = savedShakeX; shakeY_ = savedShakeY;
     }
 

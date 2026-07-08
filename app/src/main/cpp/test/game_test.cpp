@@ -92,8 +92,10 @@ TEST(Levels, RowsGrowWithLevelAndCapAtFive) {
     EXPECT_EQ(g.alienRowsForTest(), 4);
     g.startLevelForTest(5);
     EXPECT_EQ(g.alienRowsForTest(), 5);
-    g.startLevelForTest(10);
+    g.startLevelForTest(9);
     EXPECT_EQ(g.alienRowsForTest(), 5);
+    g.startLevelForTest(10);                // boss level: two-row escort only
+    EXPECT_EQ(g.alienRowsForTest(), 2);
 }
 
 TEST(Levels, MarchSpeedGrowsWithLevel) {
@@ -470,6 +472,66 @@ TEST(PowerUps, RapidFireShortensTheCooldown) {
     EXPECT_GE(g.bulletCount(), 2);
 }
 
+TEST(PowerUps, TripleShotFiresThreeAngledLasers) {
+    Game g;
+    startPlaying(g);
+    g.setFormationYForTest(-3.0f);
+    g.activatePowerUpForTest((int)Game::PU_TRIPLE);
+    ASSERT_TRUE(g.tripleActiveForTest());
+    g.onPointerDown(0, pxOf(0.0f), ctrlPy());
+    step(g, 0.1f);                              // one volley within the cooldown
+    ASSERT_EQ(g.bulletCount(), 3);
+    // One straight, one left (+8°), one right (-8°).
+    int left = 0, right = 0, straight = 0;
+    for (int i = 0; i < 3; i++) {
+        float vx = g.bulletVxForTest(i);
+        if (vx < -0.05f) left++;
+        else if (vx > 0.05f) right++;
+        else straight++;
+    }
+    EXPECT_EQ(straight, 1);
+    EXPECT_EQ(left, 1);
+    EXPECT_EQ(right, 1);
+}
+
+TEST(PowerUps, TripleShotSideLasersLeaveAtEightDegrees) {
+    Game g;
+    startPlaying(g);
+    g.setFormationYForTest(-3.0f);
+    g.activatePowerUpForTest((int)Game::PU_TRIPLE);
+    g.onPointerDown(0, pxOf(0.0f), ctrlPy());
+    step(g, 0.1f);
+    ASSERT_EQ(g.bulletCount(), 3);
+    // |vx| of the side lasers must equal sin(8°) x bullet speed (~0.334).
+    const float expected = 2.40f * sinf(8.0f * 3.14159265f / 180.0f);
+    float minVx = 1e9f, maxVx = -1e9f;
+    for (int i = 0; i < 3; i++) {
+        float vx = g.bulletVxForTest(i);
+        if (vx < minVx) minVx = vx;
+        if (vx > maxVx) maxVx = vx;
+    }
+    EXPECT_NEAR(minVx, -expected, 0.01f);
+    EXPECT_NEAR(maxVx,  expected, 0.01f);
+}
+
+TEST(PowerUps, CollectingTripleActivatesIt) {
+    Game g;
+    startPlaying(g);
+    g.spawnTestPowerUp(g.shipX(), 0.45f, (int)Game::PU_TRIPLE);
+    step(g, 0.8f);
+    EXPECT_TRUE(g.tripleActiveForTest());
+}
+
+TEST(PowerUps, TripleExpires) {
+    Game g;
+    startPlaying(g);
+    g.setFormationYForTest(-3.0f);
+    g.activatePowerUpForTest((int)Game::PU_TRIPLE);
+    ASSERT_TRUE(g.tripleActiveForTest());
+    step(g, 9.0f);
+    EXPECT_FALSE(g.tripleActiveForTest());
+}
+
 TEST(PowerUps, RapidFireExpires) {
     Game g;
     startPlaying(g);
@@ -496,15 +558,99 @@ TEST(Progression, ClearingTheWavePaysABonusAndAdvances) {
     EXPECT_EQ(g.alienCount(), 24);             // level 2 is still 3 rows of 8
 }
 
-TEST(Progression, ClearingLevelTenWinsTheGame) {
+TEST(Progression, ClearingLevelNineAdvancesToTen) {
     Game g;
     g.setViewport(kW, kH);
-    g.startLevelForTest(10);
+    g.startLevelForTest(9);
     for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
     g.update(0.016f);
     ASSERT_TRUE(g.isLevelClearForTest());
     step(g, 2.0f);
+    EXPECT_TRUE(g.isPlayingForTest());
+    EXPECT_EQ(g.level(), 10);
+    EXPECT_TRUE(g.bossActiveForTest());
+}
+
+// ── Boss mothership (level 10) ───────────────────────────────────────────────
+
+TEST(Boss, SpawnsAtLevelTenWithFullHealth) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    EXPECT_TRUE(g.bossActiveForTest());
+    EXPECT_TRUE(g.bossAliveForTest());
+    EXPECT_EQ(g.bossHpForTest(), 16);
+    EXPECT_FALSE(g.bossActiveForTest() && g.level() != 10);
+    g.startLevelForTest(9);
+    EXPECT_FALSE(g.bossActiveForTest());
+}
+
+TEST(Boss, DriftsAcrossTheTop) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    step(g, 1.0f);
+    float x1 = g.bossXForTest();
+    step(g, 1.0f);
+    EXPECT_NE(g.bossXForTest(), x1);
+}
+
+TEST(Boss, ClearingTheEscortDoesNotClearTheLevel) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
+    step(g, 0.5f);
+    EXPECT_TRUE(g.isPlayingForTest());     // boss still up: no LEVEL_CLEAR
+}
+
+TEST(Boss, FiresAimedBombs) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    // Remove the escort so the only bombs left are the boss's.
+    for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
+    bool seen = false;
+    for (int i = 0; i < 300 && !seen; i++) {
+        g.update(1.0f / 60.0f);
+        seen = g.bombCount() > 0;
+    }
+    EXPECT_TRUE(seen);
+}
+
+TEST(Boss, TakesHitsAndDiesForTheWin) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    // Remove the escort so lasers have a clear lane to the mothership.
+    for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
+    g.activatePowerUpForTest((int)Game::PU_RAPID);   // speeds the test up
+    long before = g.score();
+    int hp0 = g.bossHpForTest();
+    g.onPointerDown(0, pxOf(0.0f), ctrlPy());
+    bool killed = false;
+    for (int i = 0; i < 7200 && !killed; i++) {
+        g.setBossTimeForTest(0.0f);        // park the boss over the ship
+        g.activatePowerUpForTest((int)Game::PU_RAPID);
+        g.clearInvulnForTest();
+        if (!g.isPlayingForTest() && !g.isWinForTest()) break;  // died to a bomb
+        g.update(1.0f / 60.0f);
+        killed = !g.bossAliveForTest();
+    }
+    ASSERT_TRUE(killed);
+    EXPECT_LT(g.bossHpForTest(), hp0);
     EXPECT_TRUE(g.isWinForTest());
+    EXPECT_GE(g.score() - before, 250L * 10);
+}
+
+TEST(Boss, AutoPlayTargetsTheBoss) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    g.setAutoPlayForTest(true);
+    for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
+    g.update(0.016f);
+    EXPECT_TRUE(g.aiHasTargetForTest());
 }
 
 TEST(Progression, GameOverTapReturnsToTitle) {

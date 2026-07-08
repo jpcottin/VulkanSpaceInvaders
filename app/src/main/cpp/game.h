@@ -38,7 +38,7 @@ public:
 public:
     // Row tiers, exposed so tests can assert per-tier scoring.
     enum AlienType { ALIEN_SQUID = 0, ALIEN_CRAB = 1, ALIEN_OCTOPUS = 2 };
-    enum PowerUpType { PU_SHIELD = 0, PU_RAPID = 1 };
+    enum PowerUpType { PU_SHIELD = 0, PU_RAPID = 1, PU_TRIPLE = 2 };
 
 private:
     enum State { TITLE, PLAYING, LEVEL_CLEAR, GAME_OVER, WIN, SETTINGS };
@@ -50,9 +50,16 @@ private:
         AlienType type;
         bool alive;
     };
-    struct Bullet  { float x, y, vy; bool alive; };          // player laser, flies up
-    struct Bomb    { float x, y, vy, wobble; bool alive; };  // alien laser, falls down
+    struct Bullet  { float x, y, vx, vy; bool alive; };          // player laser, flies up
+    struct Bomb    { float x, y, vx, vy, wobble; bool alive; };  // alien laser, falls down
     struct Saucer  { float x, y, vx; bool alive = false; };
+    // Level-10 boss: a giant mothership drifting sinusoidally across the top,
+    // lobbing bombs aimed at the player. Killing it wins the game.
+    struct Boss {
+        float t = 0.0f, x = 0.0f;
+        int   hp = 0, maxHp = 0;
+        bool  alive = false;
+    };
     struct PowerUp { float x, y, vy, rot, spin; PowerUpType type; bool alive; };
     struct Particle {
         float x, y, vx, vy;
@@ -84,6 +91,7 @@ private:
     // PLAYING-state update steps, called in this order from update().
     void updateShip(float dt);
     void updateFormation(float dt);
+    void updateBoss(float dt);
     void updateBombs(float dt);
     void updateBullets(float dt);
     void updateSaucer(float dt);
@@ -126,6 +134,7 @@ private:
     void drawAlien(std::vector<DrawCmd>& out, const Alien& a, float cx, float cy,
                    float alpha);
     void drawPowerUpHUD(std::vector<DrawCmd>& out);
+    void drawBossHealthBar(std::vector<DrawCmd>& out);
     void drawControlStrip(std::vector<DrawCmd>& out);
     void drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,
                       float r, float g, float b, float a);
@@ -191,17 +200,25 @@ public:
     void  setShipXForTest(float x)      { shipX_ = x; }
     void  clearInvulnForTest()          { invuln_ = 0.0f; }
     void  spawnTestBomb(float x, float y, float vy) {
-        bombs_.push_back({x, y, vy, 0.0f, true});
+        bombs_.push_back({x, y, 0.0f, vy, 0.0f, true});
     }
     void  spawnTestPowerUp(float x, float y, int type) {
         powerUps_.push_back({x, y, 0.30f, 0.0f, 1.5f, (PowerUpType)type, true});
     }
     void  activatePowerUpForTest(int type) {
-        if (type == PU_SHIELD) shieldActive_ = true;
-        else { rapidActive_ = true; rapidTimer_ = 8.0f; }
+        if (type == PU_SHIELD)      shieldActive_ = true;
+        else if (type == PU_RAPID)  { rapidActive_  = true; rapidTimer_  = 8.0f; }
+        else                        { tripleActive_ = true; tripleTimer_ = 8.0f; }
     }
     bool  shieldActiveForTest()   const { return shieldActive_; }
     bool  rapidActiveForTest()    const { return rapidActive_; }
+    bool  tripleActiveForTest()   const { return tripleActive_; }
+    float bulletVxForTest(int i)  const { return bullets_[i].vx; }
+    bool  bossActiveForTest()     const { return bossActive_; }
+    bool  bossAliveForTest()      const { return boss_.alive; }
+    int   bossHpForTest()         const { return boss_.hp; }
+    float bossXForTest()          const { return boss_.x; }
+    void  setBossTimeForTest(float t)   { boss_.t = t; }
     bool  saucerAliveForTest()    const { return saucer_.alive; }
     float saucerXForTest()        const { return saucer_.x; }
     void  spawnSaucerForTest()          { spawnSaucer(); }
@@ -269,6 +286,11 @@ private:
     Saucer saucer_;
     float saucerTimer_ = 14.0f;
 
+    // --- boss (level 10) ---
+    Boss boss_;
+    bool bossActive_ = false;
+    float bossBombTimer_ = 0.0f;
+
     // --- screen shake ---
     float shakeAmt_ = 0.0f;
     float shakeX_   = 0.0f;
@@ -278,6 +300,8 @@ private:
     bool  shieldActive_ = false;         // absorbs one hit
     bool  rapidActive_  = false;
     float rapidTimer_   = 0.0f;
+    bool  tripleActive_ = false;         // 3-way laser volley (±8°)
+    float tripleTimer_  = 0.0f;
     static constexpr float kRapidDuration = 8.0f;
 
     // --- progression / scoring ---
