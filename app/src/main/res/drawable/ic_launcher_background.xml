@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Deep-space gradient -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="54" android:startY="0"
+                android:endX="54" android:endY="108"
+                android:startColor="#1A2148"
+                android:endColor="#05070F" />
+        </aapt:attr>
+    </path>
+
+    <!-- Stars -->
+    <path android:fillColor="#FFFFFF" android:pathData="M20,24 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 z" />
+    <path android:fillColor="#CFE8FF" android:pathData="M88,30 m-1.1,0 a1.1,1.1 0 1,0 2.2,0 a1.1,1.1 0 1,0 -2.2,0 z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M30,84 m-1.0,0 a1.0,1.0 0 1,0 2.0,0 a1.0,1.0 0 1,0 -2.0,0 z" />
+    <path android:fillColor="#9FB6E8" android:pathData="M82,82 m-1.3,0 a1.3,1.3 0 1,0 2.6,0 a1.3,1.3 0 1,0 -2.6,0 z" />
+    <path android:fillColor="#CFE8FF" android:pathData="M16,62 m-0.9,0 a0.9,0.9 0 1,0 1.8,0 a0.9,0.9 0 1,0 -1.8,0 z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M94,58 m-0.8,0 a0.8,0.8 0 1,0 1.6,0 a0.8,0.8 0 1,0 -1.6,0 z" />
+    <path android:fillColor="#8FA8D8" android:pathData="M70,18 m-0.9,0 a0.9,0.9 0 1,0 1.8,0 a0.9,0.9 0 1,0 -1.8,0 z" />
+    <path android:fillColor="#CFE8FF" android:pathData="M46,16 m-0.8,0 a0.8,0.8 0 1,0 1.6,0 a0.8,0.8 0 1,0 -1.6,0 z" />
+</vector>
