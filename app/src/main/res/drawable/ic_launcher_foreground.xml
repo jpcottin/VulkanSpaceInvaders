@@ -6,46 +6,28 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Soft cyan engine glow behind the ship -->
+    <!-- Soft green glow behind the invader -->
     <path android:pathData="M54,54 m-32,0 a32,32 0 1,0 64,0 a32,32 0 1,0 -64,0 z">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:type="radial"
-                android:centerX="54" android:centerY="58"
+                android:centerX="54" android:centerY="52"
                 android:gradientRadius="32"
-                android:startColor="#5532E6FF"
-                android:endColor="#0032E6FF" />
+                android:startColor="#554DF28C"
+                android:endColor="#004DF28C" />
         </aapt:attr>
     </path>
 
-    <!-- Starship body: swept-wing arrow, nose up, with cyan gradient -->
-    <path
-        android:pathData="M54,22 L62,58 L80,82 L62,73 L54,84 L46,73 L28,82 L46,58 Z">
+    <!-- Crab invader, 11x8 pixel grid — the same sprite the game marches
+         in its middle rows, one 4.4dp quad per lit cell. -->
+    <path android:pathData="M38.6,36.0h4.4v4.4h-4.4z M65.0,36.0h4.4v4.4h-4.4z M43.0,40.4h4.4v4.4h-4.4z M60.6,40.4h4.4v4.4h-4.4z M38.6,44.8h4.4v4.4h-4.4z M43.0,44.8h4.4v4.4h-4.4z M47.4,44.8h4.4v4.4h-4.4z M51.8,44.8h4.4v4.4h-4.4z M56.2,44.8h4.4v4.4h-4.4z M60.6,44.8h4.4v4.4h-4.4z M65.0,44.8h4.4v4.4h-4.4z M34.2,49.2h4.4v4.4h-4.4z M38.6,49.2h4.4v4.4h-4.4z M47.4,49.2h4.4v4.4h-4.4z M51.8,49.2h4.4v4.4h-4.4z M56.2,49.2h4.4v4.4h-4.4z M65.0,49.2h4.4v4.4h-4.4z M69.4,49.2h4.4v4.4h-4.4z M29.8,53.6h4.4v4.4h-4.4z M34.2,53.6h4.4v4.4h-4.4z M38.6,53.6h4.4v4.4h-4.4z M43.0,53.6h4.4v4.4h-4.4z M47.4,53.6h4.4v4.4h-4.4z M51.8,53.6h4.4v4.4h-4.4z M56.2,53.6h4.4v4.4h-4.4z M60.6,53.6h4.4v4.4h-4.4z M65.0,53.6h4.4v4.4h-4.4z M69.4,53.6h4.4v4.4h-4.4z M73.8,53.6h4.4v4.4h-4.4z M29.8,58.0h4.4v4.4h-4.4z M38.6,58.0h4.4v4.4h-4.4z M43.0,58.0h4.4v4.4h-4.4z M47.4,58.0h4.4v4.4h-4.4z M51.8,58.0h4.4v4.4h-4.4z M56.2,58.0h4.4v4.4h-4.4z M60.6,58.0h4.4v4.4h-4.4z M65.0,58.0h4.4v4.4h-4.4z M73.8,58.0h4.4v4.4h-4.4z M29.8,62.4h4.4v4.4h-4.4z M38.6,62.4h4.4v4.4h-4.4z M65.0,62.4h4.4v4.4h-4.4z M73.8,62.4h4.4v4.4h-4.4z M43.0,66.8h4.4v4.4h-4.4z M47.4,66.8h4.4v4.4h-4.4z M56.2,66.8h4.4v4.4h-4.4z M60.6,66.8h4.4v4.4h-4.4z">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:type="linear"
-                android:startX="54" android:startY="22"
-                android:endX="54" android:endY="84"
-                android:startColor="#A6F2FF"
-                android:endColor="#34BEEA" />
+                android:startX="54" android:startY="36"
+                android:endX="54" android:endY="71.2"
+                android:startColor="#7CFFB0"
+                android:endColor="#2ECC71" />
         </aapt:attr>
     </path>
-
-    <!-- Bright edge highlight along the nose -->
-    <path
-        android:fillColor="#E8FCFF"
-        android:pathData="M54,22 L57,36 L51,36 Z" />
-
-    <!-- Cockpit -->
-    <path
-        android:fillColor="#0E1430"
-        android:pathData="M54,38 L57,55 L51,55 Z" />
-
-    <!-- Engine flame -->
-    <path
-        android:fillColor="#FFD66B"
-        android:pathData="M50,84 L54,95 L58,84 Z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M52,84 L54,90 L56,84 Z" />
 </vector>
