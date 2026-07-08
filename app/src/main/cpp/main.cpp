@@ -10,6 +10,7 @@
 #include "vk_renderer.h"
 #include "game.h"
 #include "audio.h"
+#include "glasses.h"
 
 // Trigger a 50 ms haptic pulse on a detached thread so the game loop never blocks.
 static void triggerHaptic(android_app* app) {
@@ -138,6 +139,34 @@ void android_main(android_app* app) {
     engine.instanceReady = engine.renderer.initInstance();
     engine.game.setDataPath(app->activity->internalDataPath);
     engine.game.setHapticCallback([app]() { triggerHaptic(app); });
+
+    // Phone vs AI-Glasses role: the same android_main runs for both the
+    // launcher NativeActivity and GlassesGameActivity (projected display).
+    const bool glassesRole = glassesIsGlassesActivity(app);
+    if (glassesRole) {
+        LOGI("Running on the glasses (touchbar controls)");
+        engine.game.setControlMode(Game::CONTROL_TOUCHBAR);
+        // The projected display runs at 30 Hz: every buffered frame costs a
+        // full 33 ms, so trim the present queue to its minimum.
+        engine.renderer.setLowLatencyMode(true);
+        // Floating quarter-size window: easier on the lenses and 4x fewer
+        // pixels to rasterise and encode into the projection stream.
+        engine.renderer.setRenderScale(0.5f);
+        g_glassesSessionActive = true;
+    } else {
+        glassesStartMonitoring(app);
+        engine.game.setGlassesLaunchCallback([app]() {
+            bool ok = glassesLaunch(app);
+            if (ok) g_glassesSessionActive = true;
+            return ok;
+        });
+        engine.game.setGlassesExitCallback([]() {
+            g_glassesSessionActive = false;   // the glasses instance sees this and finishes
+        });
+    }
+    float glassesPollTimer = 0.0f;
+    bool  finishRequested  = false;
+
     engine.lastTime = now_s();
 
     while (true) {
@@ -147,6 +176,7 @@ void android_main(android_app* app) {
         while (ALooper_pollOnce(timeout, nullptr, &events, (void**)&source) >= 0) {
             if (source) source->process(app, source);
             if (app->destroyRequested) {
+                if (glassesRole) g_glassesSessionActive = false;
                 engine.renderer.cleanup();
                 return;
             }
@@ -157,6 +187,23 @@ void android_main(android_app* app) {
             double now = now_s();
             float dt = (float)(now - engine.lastTime);
             engine.lastTime = now;
+
+            if (glassesRole) {
+                // The phone asked for the game back (Settings -> BACK TO PHONE).
+                if (!g_glassesSessionActive && !finishRequested) {
+                    finishRequested = true;
+                    glassesFinishActivity(app);
+                }
+            } else {
+                // Poll the Kotlin bridge at ~1 Hz (JNI call) and mirror the
+                // process-wide session flag into the game every frame.
+                glassesPollTimer += dt;
+                if (glassesPollTimer >= 1.0f) {
+                    glassesPollTimer = 0.0f;
+                    engine.game.setGlassesConnected(glassesIsConnected(app));
+                }
+                engine.game.setGlassesActive(g_glassesSessionActive.load());
+            }
 
             engine.game.setViewport(engine.renderer.width(), engine.renderer.height());
             engine.game.update(dt);
@@ -180,12 +227,23 @@ void android_main(android_app* app) {
                 fpsFrames = 0;
             }
 
-            // Idle screens (title / game over / win) don't need 60 fps.
-            // Sleeping past one 60 Hz vsync period makes the FIFO present
-            // snap to every second vsync (~30 fps), saving battery. A plain
-            // 16 ms sleep would only overlap the existing present-wait.
-            if (engine.game.isIdleScreen())
+            if (glassesRole) {
+                // MAILBOX present free-runs (no vsync block). Pace just above
+                // the 30 Hz panel so the queued frame stays fresh (low
+                // latency) without burning CPU on frames that would be
+                // discarded anyway.
+                double spent = now_s() - now;
+                const double kTarget = 1.0 / 34.0;
+                if (spent < kTarget)
+                    std::this_thread::sleep_for(
+                        std::chrono::duration<double>(kTarget - spent));
+            } else if (engine.game.isIdleScreen()) {
+                // Idle screens (title / game over / win) don't need 60 fps.
+                // Sleeping past one 60 Hz vsync period makes the FIFO present
+                // snap to every second vsync (~30 fps), saving battery. A
+                // plain 16 ms sleep would only overlap the present-wait.
                 std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            }
         }
     }
 }

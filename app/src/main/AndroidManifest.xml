@@ -28,6 +28,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The same native game, launched onto a paired AI-Glasses projected
+             display (Settings -> GLASSES). Touchbar controls, black background. -->
+        <activity
+            android:name=".GlassesGameActivity"
+            android:exported="false"
+            android:theme="@style/Theme.VulkanSpaceInvaders"
+            android:requiredDisplayCategory="@string/display_category_xr_projected"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|density|uiMode">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="spaceinvaders" />
+        </activity>
     </application>
 
 </manifest>

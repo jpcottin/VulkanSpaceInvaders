@@ -712,9 +712,112 @@ TEST(Settings, BackReturnsToPreviousState) {
     tap(g, pxOf(aspect() - 0.062f), pyOf(-0.82f));
     g.update(0.016f);
     ASSERT_TRUE(g.inSettingsForTest());
-    tap(g, pxOf(0.0f), pyOf(0.52f));            // back button
+    tap(g, pxOf(0.0f), pyOf(0.66f));            // back button
     g.update(0.016f);
     EXPECT_TRUE(g.isPlayingForTest());
+}
+
+// ── AI Glasses: touchbar control mode + settings hand-off ────────────────────
+
+TEST(Glasses, TouchbarSteersAndFiresFromAnywhere) {
+    Game g;
+    startPlaying(g);
+    g.setControlMode(Game::CONTROL_TOUCHBAR);
+    g.setFormationYForTest(-3.0f);
+    // Mid-screen touch — ignored by the phone strip, but the whole surface is
+    // the touchbar on the glasses.
+    g.onPointerDown(0, pxOf(0.25f), kH * 0.4f);
+    step(g, 0.4f);
+    EXPECT_GT(g.shipX(), 0.05f);
+    EXPECT_GE(g.bulletCount(), 1);
+}
+
+TEST(Glasses, StripModeStillIgnoresMidScreenTouch) {
+    Game g;
+    startPlaying(g);
+    g.onPointerDown(0, pxOf(0.25f), kH * 0.4f);
+    step(g, 0.4f);
+    EXPECT_FLOAT_EQ(g.shipX(), 0.0f);
+    EXPECT_EQ(g.bulletCount(), 0);
+}
+
+TEST(Glasses, NoGearOnTheGlasses) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.setControlMode(Game::CONTROL_TOUCHBAR);
+    tap(g, pxOf(aspect() - 0.062f), pyOf(-0.82f));   // gear position
+    g.update(0.016f);
+    EXPECT_FALSE(g.inSettingsForTest());
+}
+
+TEST(Glasses, TouchbarClearColorIsPureBlack) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.setControlMode(Game::CONTROL_TOUCHBAR);
+    float c[3];
+    g.clearColor(c);
+    EXPECT_FLOAT_EQ(c[0], 0.0f);
+    EXPECT_FLOAT_EQ(c[1], 0.0f);
+    EXPECT_FLOAT_EQ(c[2], 0.0f);
+}
+
+TEST(Glasses, SettingsRowLaunchesWhenConnected) {
+    Game g;
+    g.setViewport(kW, kH);
+    bool launched = false;
+    g.setGlassesLaunchCallback([&]() { launched = true; return true; });
+    g.setGlassesConnected(true);
+    tap(g, pxOf(aspect() - 0.062f), pyOf(-0.82f));   // open settings
+    g.update(0.016f);
+    ASSERT_TRUE(g.inSettingsForTest());
+    tap(g, pxOf(0.0f), pyOf(0.35f));                 // glasses row
+    g.update(0.016f);
+    EXPECT_TRUE(launched);
+}
+
+TEST(Glasses, SettingsRowInertWhenNotConnected) {
+    Game g;
+    g.setViewport(kW, kH);
+    bool launched = false;
+    g.setGlassesLaunchCallback([&]() { launched = true; return true; });
+    g.setGlassesConnected(false);
+    tap(g, pxOf(aspect() - 0.062f), pyOf(-0.82f));
+    g.update(0.016f);
+    tap(g, pxOf(0.0f), pyOf(0.35f));
+    g.update(0.016f);
+    EXPECT_FALSE(launched);
+    EXPECT_TRUE(g.inSettingsForTest());              // stayed put, no crash
+}
+
+TEST(Glasses, SettingsRowExitsWhenActive) {
+    Game g;
+    g.setViewport(kW, kH);
+    bool exited = false;
+    g.setGlassesExitCallback([&]() { exited = true; });
+    g.setGlassesConnected(true);
+    g.setGlassesActive(true);
+    tap(g, pxOf(aspect() - 0.062f), pyOf(-0.82f));
+    g.update(0.016f);
+    tap(g, pxOf(0.0f), pyOf(0.35f));
+    g.update(0.016f);
+    EXPECT_TRUE(exited);
+}
+
+TEST(Glasses, PhoneGameplayFreezesWhileOnGlasses) {
+    Game g;
+    startPlaying(g);
+    g.setGlassesActive(true);
+    g.spawnTestBomb(0.3f, 0.0f, 0.6f);
+    long score0 = g.score();
+    float alienX0 = g.alienXForTest(0);
+    step(g, 1.0f);
+    EXPECT_EQ(g.bombCount(), 1);                     // bomb frozen mid-air
+    EXPECT_FLOAT_EQ(g.alienXForTest(0), alienX0);    // wave frozen
+    EXPECT_EQ(g.score(), score0);
+    // Hand the game back: everything moves again.
+    g.setGlassesActive(false);
+    step(g, 1.0f);
+    EXPECT_NE(g.alienXForTest(0), alienX0);
 }
 
 TEST(Settings, PersistAcrossInstances) {

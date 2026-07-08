@@ -20,6 +20,18 @@ public:
     int width() const { return (int)extent_.width; }
     int height() const { return (int)extent_.height; }
 
+    // Trade throughput for input-to-photon latency: minimal swapchain image
+    // count, a single frame in flight, and MAILBOX present when available.
+    // Used on the AI-Glasses projected display, whose 30 Hz vsync makes every
+    // queued frame cost a full 33 ms. Call before initWindow().
+    void setLowLatencyMode(bool v) { lowLatency_ = v; }
+
+    // Render into a centered, scaled-down viewport instead of the full
+    // surface (0.5 = quarter of the pixels). The surround stays clear-colour.
+    // Draw commands are NDC-based, so callers need no changes; on the glasses
+    // this shrinks the game to a floating window and cuts raster work 4x.
+    void setRenderScale(float s) { renderScale_ = s; }
+
     void drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3]);
 
 private:
@@ -29,6 +41,7 @@ private:
     bool createRenderPass();
     bool createPipeline();
     bool createVertexBuffer();
+    bool createInstanceBuffers();
     bool createSyncAndCommands();
     void recordCommandBuffer(VkCommandBuffer cb, uint32_t imageIndex,
                              const std::vector<DrawCmd>& cmds, const float clear[3]);
@@ -61,6 +74,11 @@ private:
 
     VkCommandPool cmdPool_ = VK_NULL_HANDLE;
     static const int kFramesInFlight = 2;
+    // Per-frame host-visible instance buffers (persistently mapped).
+    static const uint32_t kMaxInstances = 8192;
+    VkBuffer instBuf_[kFramesInFlight] = {VK_NULL_HANDLE};
+    VkDeviceMemory instMem_[kFramesInFlight] = {VK_NULL_HANDLE};
+    void* instMapped_[kFramesInFlight] = {nullptr};
     VkCommandBuffer cmdBufs_[kFramesInFlight] = {VK_NULL_HANDLE};
     VkSemaphore imageAvailable_[kFramesInFlight] = {VK_NULL_HANDLE};
     VkSemaphore renderFinished_[kFramesInFlight] = {VK_NULL_HANDLE};
@@ -69,4 +87,8 @@ private:
 
     bool deviceReady_ = false;
     bool swapchainReady_ = false;
+    bool lowLatency_ = false;
+    float renderScale_ = 1.0f;
+
+    int framesInFlight() const { return lowLatency_ ? 1 : kFramesInFlight; }
 };

@@ -30,15 +30,34 @@ public:
     void clearColor(float out[3]) const;
 
     // True on static screens (title / game over / win) where the main loop may
-    // throttle the frame rate to save battery.
+    // throttle the frame rate to save battery — and on the phone for the whole
+    // time the game is being played on the glasses, so the phone's swapchain
+    // stops competing with the projected display's stream.
     bool isIdleScreen() const {
-        return state_ == TITLE || state_ == GAME_OVER || state_ == WIN;
+        return state_ == TITLE || state_ == GAME_OVER || state_ == WIN ||
+               (glassesActive_ && controlMode_ == CONTROL_STRIP);
     }
 
 public:
     // Row tiers, exposed so tests can assert per-tier scoring.
     enum AlienType { ALIEN_SQUID = 0, ALIEN_CRAB = 1, ALIEN_OCTOPUS = 2 };
     enum PowerUpType { PU_SHIELD = 0, PU_RAPID = 1, PU_TRIPLE = 2 };
+
+    // How touch input drives the ship.
+    //  CONTROL_STRIP:    phone — the strip below the ship steers + fires.
+    //  CONTROL_TOUCHBAR: AI glasses — the whole touch surface is the bar:
+    //                    finger x steers, contact fires. No strip, no gear,
+    //                    pure-black clear (black = transparent on AR lenses).
+    enum ControlMode { CONTROL_STRIP = 0, CONTROL_TOUCHBAR = 1 };
+    void setControlMode(ControlMode m) { controlMode_ = m; }
+
+    // Glasses session plumbing, fed by the platform layer (main.cpp):
+    // connection state is polled from the Kotlin bridge; "active" mirrors the
+    // process-wide session flag while the game runs on the glasses.
+    void setGlassesConnected(bool v) { glassesConnected_ = v; }
+    void setGlassesActive(bool v);
+    void setGlassesLaunchCallback(std::function<bool()> fn) { glassesLaunch_ = std::move(fn); }
+    void setGlassesExitCallback(std::function<void()> fn)   { glassesExit_ = std::move(fn); }
 
 private:
     enum State { TITLE, PLAYING, LEVEL_CLEAR, GAME_OVER, WIN, SETTINGS };
@@ -138,6 +157,9 @@ private:
     void drawControlStrip(std::vector<DrawCmd>& out);
     void drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,
                       float r, float g, float b, float a);
+    void drawGlassesIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,
+                         float r, float g, float b, float a);
+    void drawOnGlassesOverlay(std::vector<DrawCmd>& out);
     void drawSettingsScreen(std::vector<DrawCmd>& out);
     void loadSettings();
     void saveSettings();
@@ -234,6 +256,8 @@ public:
     bool  isWinForTest()          const { return state_ == WIN; }
     bool  soundEnabledForTest()   const { return soundEnabled_; }
     bool  autoPlayActiveForTest() const { return autoPlayActive_; }
+    int   controlModeForTest()    const { return (int)controlMode_; }
+    bool  glassesActiveForTest()  const { return glassesActive_; }
     void  setAutoPlayForTest(bool v)    { autoPlayActive_ = v; }
     float aiTargetXForTest()      const { return aiTargetX_; }
     bool  aiFireForTest()         const { return aiFire_; }
@@ -316,6 +340,13 @@ private:
     bool soundEnabled_   = true;
     bool autoPlayActive_ = false;
     char settingsPath_[512] = {};
+
+    // --- control mode / glasses session (not persisted) ---
+    ControlMode controlMode_ = CONTROL_STRIP;
+    bool glassesConnected_ = false;
+    bool glassesActive_    = false;
+    std::function<bool()> glassesLaunch_;
+    std::function<void()> glassesExit_;
 
     // --- auto-play AI (drives the same control path as a finger) ---
     bool  aiMove_    = false;
