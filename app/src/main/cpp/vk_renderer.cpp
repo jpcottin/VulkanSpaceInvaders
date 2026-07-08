@@ -694,6 +694,23 @@ void VkRenderer::recordCommandBuffer(VkCommandBuffer cb, uint32_t imageIndex,
 void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3]) {
     if (!swapchainReady_) return;
 
+    // Foldables resize the surface on fold/unfold without destroying the
+    // window (configChanges keeps the activity alive), and the compositor
+    // would happily stretch the stale-size swapchain onto the new panel.
+    // Rebuild the swapchain whenever the surface extent no longer matches.
+    VkSurfaceCapabilitiesKHR caps;
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_, surface_, &caps) == VK_SUCCESS &&
+        caps.currentExtent.width != 0xFFFFFFFF &&
+        caps.currentExtent.width != 0 && caps.currentExtent.height != 0 &&
+        (caps.currentExtent.width != extent_.width ||
+         caps.currentExtent.height != extent_.height)) {
+        LOGI("Surface resized %ux%u -> %ux%u, recreating swapchain",
+             extent_.width, extent_.height,
+             caps.currentExtent.width, caps.currentExtent.height);
+        destroySwapchain();
+        if (!createSwapchain()) { swapchainReady_ = false; return; }
+    }
+
     vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
 
     uint32_t imageIndex = 0;
