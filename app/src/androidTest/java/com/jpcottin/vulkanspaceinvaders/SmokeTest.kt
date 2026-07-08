@@ -6,7 +6,9 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import android.graphics.Bitmap
+import android.os.ParcelFileDescriptor
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,6 +26,13 @@ class SmokeTest {
     @get:Rule
     val activityRule = ActivityScenarioRule(NativeActivity::class.java)
 
+    private fun shell(cmd: String): String {
+        val pfd = InstrumentationRegistry.getInstrumentation()
+            .uiAutomation.executeShellCommand(cmd)
+        return ParcelFileDescriptor.AutoCloseInputStream(pfd)
+            .bufferedReader().readText()
+    }
+
     @Test
     fun vulkanInitialisesWithoutCrash() {
         // Give the native Vulkan renderer time to complete its first frame.
@@ -34,6 +43,19 @@ class SmokeTest {
             "NativeActivity should be RESUMED after Vulkan init, but was $state",
             Lifecycle.State.RESUMED,
             state
+        )
+
+        // RESUMED alone doesn't prove pixels: the game survives a Vulkan-less
+        // device without crashing (it just renders nothing). Assert the
+        // renderer actually brought a swapchain up, so a dead render path
+        // fails the test instead of producing silent black screenshots.
+        // Note: a single filterspec — a second one for the same tag would
+        // override the first (":I" already includes warnings and errors).
+        val log = shell("logcat -d -s SpaceInvaders:I")
+        assertTrue(
+            "Renderer never reached 'Swapchain ready' — Vulkan log was:\n" +
+                log.lines().takeLast(20).joinToString("\n"),
+            log.contains("Swapchain ready")
         )
 
         // Capture a screenshot while the game is guaranteed to be in the foreground.

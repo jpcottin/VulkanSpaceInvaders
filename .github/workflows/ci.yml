@@ -109,7 +109,7 @@ jobs:
             cores: 4
             disk-size: 8192M
             experimental: true
-            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel -feature GLDirectMem,HasSharedSlotsHostMemoryAllocator
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel -feature GLDirectMem,HasSharedSlotsHostMemoryAllocator,Vulkan
           - api-level: '37.0'
             suffix: lavapipe
             target: google_apis_ps16k
@@ -118,7 +118,7 @@ jobs:
             cores: 4
             disk-size: 8192M
             experimental: true
-            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel -feature GLDirectMem,HasSharedSlotsHostMemoryAllocator
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel -feature GLDirectMem,HasSharedSlotsHostMemoryAllocator,Vulkan
           - api-level: '37.0'
             suffix: auto
             target: google_apis_ps16k
@@ -127,7 +127,7 @@ jobs:
             cores: 4
             disk-size: 8192M
             experimental: true
-            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel -feature GLDirectMem,HasSharedSlotsHostMemoryAllocator
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel -feature GLDirectMem,HasSharedSlotsHostMemoryAllocator,Vulkan
 
     steps:
       - uses: actions/checkout@v6
