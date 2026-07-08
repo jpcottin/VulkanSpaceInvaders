@@ -218,7 +218,14 @@ Three GitHub Actions jobs run on every push and pull request to `main`:
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
 | **Native Tests** | Runs the 73 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
-| **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators and captures an in-game screenshot via `UiAutomation`. Blocking on API 34 + 36; non-blocking preview legs on API 37.0 (`google_apis_ps16k`, 16 KB pages) across the swiftshader / lavapipe / auto GPU backends | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
+| **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators and captures an in-game screenshot via `UiAutomation`. The test asserts the activity is RESUMED **and** that the renderer logged `Swapchain ready`, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking preview legs on API 37.0 (`google_apis_ps16k`, 16 KB pages) across the swiftshader / lavapipe / auto GPU backends | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
+
+Known preview-image limitation: the API 37.0 `ps16k` CI emulators only expose a
+Vulkan device with the emulator's `-feature ... Vulkan` flag (already set in the
+workflow), and their SwiftShader-Vulkan stack currently presents the clear
+colour but rasterises no geometry — so those legs' screenshots show an empty
+game background. The same APK renders correctly on arm64 API 37 emulators and
+on API 34/36; upstream emulator issue, nothing to fix in the app.
 
 ## License
 
