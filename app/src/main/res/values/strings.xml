@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Vulkan Space Invaders</string>
+    <string name="display_category_xr_projected" translatable="false">xr_projected</string>
 </resources>

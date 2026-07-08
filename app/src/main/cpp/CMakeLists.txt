@@ -50,7 +50,8 @@ add_library(spaceinvaders SHARED
     main.cpp
     vk_renderer.cpp
     game.cpp
-    audio.cpp)
+    audio.cpp
+    glasses.cpp)
 
 add_dependencies(spaceinvaders shaders)
 target_include_directories(spaceinvaders PRIVATE "${GEN_DIR}")

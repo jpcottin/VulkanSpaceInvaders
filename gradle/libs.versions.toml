@@ -1,11 +1,15 @@
 [versions]
-androidGradlePlugin = "9.0.1"
+androidGradlePlugin = "9.1.0"
 androidxTestRunner  = "1.6.2"
 androidxTestExtJunit = "1.2.1"
+xrProjected         = "1.0.0-alpha06"
+coroutines          = "1.8.1"
 
 [libraries]
 androidx-test-runner   = { group = "androidx.test",     name = "runner", version.ref = "androidxTestRunner" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit",  version.ref = "androidxTestExtJunit" }
+androidx-xr-projected  = { group = "androidx.xr.projected", name = "projected", version.ref = "xrProjected" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }

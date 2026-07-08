@@ -22,6 +22,10 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
 |:---:|:---:|
 | <img src="docs/screenshots/level-clear.png" width="360" alt="Level clear screen with power-up timers and AUTO badge"> | <img src="docs/screenshots/game-over.png" width="360" alt="Game over screen with gold pulsing new high score"> |
 
+| Settings with paired AI Glasses | On the glasses: floating quarter-size window |
+|:---:|:---:|
+| <img src="docs/screenshots/settings-glasses.png" width="360" alt="Settings screen with PLAY ON GLASSES row"> | <img src="docs/screenshots/glasses-gameplay.png" width="394" alt="Live gameplay as a floating window on the AI Glasses projected display"> |
+
 ## Gameplay
 
 | Control | Action |
@@ -80,6 +84,12 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
   label while active.
 - **Foldable-aware:** fold or unfold mid-game and the layout re-adapts
   instantly — no stretching (see Tech).
+- **Play on AI Glasses:** with Display Glasses paired, Settings shows a
+  glasses row — *PLAY ON GLASSES* hands the whole game to the glasses'
+  projected display, where the **touchbar** drives it: finger position steers
+  the ship, contact auto-fires. The phone shows an "ON GLASSES" banner and
+  throttles itself; *BACK TO PHONE* (in Settings) brings the game home. With
+  nothing paired the row reads *NO GLASSES*.
 
 ## Tech
 
@@ -113,6 +123,27 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
   letting the compositor stretch the old one. The Compose-oriented adaptive
   layout tooling doesn't apply to a native Vulkan game — this is its NDK
   equivalent.
+- **AI Glasses (Android XR projected)** — the glasses expose a secondary
+  display (`ProjectionDisplay`, 30 Hz) owned by a virtual device. A ~70-line
+  Kotlin bridge (`GlassesBridge.kt`, the repo's only production JVM code) uses
+  `androidx.xr.projected` to observe pairing (`isProjectedDeviceConnected`)
+  and to launch `GlassesGameActivity` — a second `NativeActivity` declared
+  with `requiredDisplayCategory="xr_projected"` — onto that display. The
+  native side calls the bridge over JNI, detects its role from the activity
+  class, and switches the same game to touchbar controls with a pure-black
+  clear (black = transparent on additive AR lenses). Phone and glasses
+  instances coordinate through one process-wide session flag; the phone
+  freezes and sleep-throttles while the glasses play so the projected
+  display's encoder gets the GPU. The projected display is a 30 Hz panel, so
+  the glasses instance uses a **low-latency swapchain** (minimal image count,
+  one frame in flight, MAILBOX present when available, loop paced to ~60 fps)
+  — app-side input latency drops from ~3 queued FIFO frames to about one
+  refresh — and renders into a **centered quarter-size viewport** (a floating
+  window on the lenses, 4× fewer pixels to rasterise; draw commands are
+  NDC-based so nothing else changes). Emulator tips: input must target the
+  projected display — `adb shell input -d <displayId> tap x y` — taps on the
+  glasses AVD's own window are not forwarded, and the projection tears down
+  when the glasses AVD sleeps (wake it to re-pair).
 - **Runtime diagnostics via Logcat** — every launch logs a full Vulkan
   extension audit (`✓ USED` / `~ PRESENT` / `✗ ABSENT` / `? UNKNOWN`) for
   instance and device extensions, and a periodic FPS line (frames/s, average
@@ -139,7 +170,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-65 tests covering the formation (rows per level, march direction, edge
+73 tests covering the formation (rows per level, march direction, edge
 reversal + descent, speed-up as the wave thins, side-margin containment),
 invasion game-over, alien-ship collision, touch-strip ship control (steer,
 stop-on-finger, clamping, zone boundaries), firing (auto-fire, cooldown,
@@ -151,9 +182,12 @@ expiry), the level-10 boss (spawn + HP, sine drift, aimed bombs,
 escort-doesn't-clear rule, kill-to-win payout, Auto Play targeting), level
 progression (clear bonus, advance, boss handoff at 10, game over on zero
 lives), the settings state machine (gear tap, toggles, back button,
-persistence across instances), high-score persistence, and the Auto Play AI
+persistence across instances), high-score persistence, the Auto Play AI
 (autonomous fire, bomb dodging, power-up interception, saucer lead-aiming,
-wave completion). Run on a connected device or emulator:
+wave completion), and the AI-Glasses integration (touchbar steer/fire from
+anywhere, strip-mode isolation, no gear on glasses, pure-black clear, settings
+row launch/inert/exit behaviour, phone gameplay freeze during a glasses
+session). Run on a connected device or emulator:
 
 ```bash
 # ARM device (default)
@@ -183,7 +217,7 @@ Three GitHub Actions jobs run on every push and pull request to `main`:
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs the 65 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Native Tests** | Runs the 73 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
 | **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators and captures an in-game screenshot via `UiAutomation`. Blocking on API 34 + 36; non-blocking preview legs on API 37.0 (`google_apis_ps16k`, 16 KB pages) across the swiftshader / lavapipe / auto GPU backends | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
 
 ## License

@@ -1,19 +1,15 @@
 #version 450
 
-layout(push_constant) uniform PC {
-    vec4 mtx;
-    vec2 trans;
-    vec2 style;  // x: FillStyle (0 = flat, 1 = glow), y: reserved
-    vec4 color;
-} pc;
-
 layout(location = 0) in vec2 vLocal;
+layout(location = 1) flat in vec2 vStyle;  // x: FillStyle (0 = flat, 1 = glow)
+layout(location = 2) flat in vec4 vColor;
+
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    vec4 col = pc.color;
+    vec4 col = vColor;
 
-    if (pc.style.x > 0.5) {
+    if (vStyle.x > 0.5) {
         // Soft radial glow: full alpha at the centre, fading to nothing at the
         // silhouette. Used for explosion rings, laser halos and the shield bubble.
         float r = length(vLocal);

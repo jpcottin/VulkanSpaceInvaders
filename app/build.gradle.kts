@@ -1,3 +1,5 @@
+// AGP 9 compiles the (single) Kotlin bridge file with its built-in Kotlin
+// support — no explicit Kotlin plugin.
 plugins {
   alias(libs.plugins.android.application)
 }
@@ -32,7 +34,9 @@ tasks.register("runNativeTests") {
 
 android {
     namespace = "com.jpcottin.vulkanspaceinvaders"
-    compileSdk = 36
+    // 37 is required by androidx.xr.projected (AI Glasses); the game itself
+    // only needs 24+.
+    compileSdk = 37
     ndkVersion = "29.0.14206865"
 
     defaultConfig {
@@ -82,6 +86,10 @@ android {
 }
 
 dependencies {
+    // AI Glasses: projected-display detection + activity launch (API 36+ at runtime).
+    implementation(libs.androidx.xr.projected)
+    implementation(libs.kotlinx.coroutines.android)
+
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
 }

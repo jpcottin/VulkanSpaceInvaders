@@ -113,15 +113,18 @@ void Game::setViewport(int w, int h) {
 // steers the ship (toward the finger x) and holds the fire trigger. Auto-play
 // feeds the same path through aiMove_/aiTargetX_/aiFire_.
 
+// In CONTROL_TOUCHBAR mode (AI glasses) the whole surface is the control bar;
+// in CONTROL_STRIP mode only the bottom strip counts.
 bool Game::moveHeld() const {
     for (auto& p : pointers_)
-        if (p.active && p.y > vh_ * kCtrlZoneFrac) return true;
+        if (p.active && (controlMode_ == CONTROL_TOUCHBAR || p.y > vh_ * kCtrlZoneFrac))
+            return true;
     return autoPlayActive_ && aiMove_;
 }
 
 float Game::controlTargetX() const {
     for (auto& p : pointers_)
-        if (p.active && p.y > vh_ * kCtrlZoneFrac)
+        if (p.active && (controlMode_ == CONTROL_TOUCHBAR || p.y > vh_ * kCtrlZoneFrac))
             return (2.0f * p.x / vw_ - 1.0f) * asp_;
     return aiTargetX_;   // only reached when auto-play set aiMove_
 }
@@ -129,8 +132,24 @@ float Game::controlTargetX() const {
 bool Game::fireHeld() const {
     if (autoPlayActive_ && aiFire_) return true;
     for (auto& p : pointers_)
-        if (p.active && p.y > vh_ * kCtrlZoneFrac) return true;
+        if (p.active && (controlMode_ == CONTROL_TOUCHBAR || p.y > vh_ * kCtrlZoneFrac))
+            return true;
     return false;
+}
+
+// Entering/leaving a glasses session: the phone instance freezes its own
+// gameplay and hands the speakers to the glasses instance.
+void Game::setGlassesActive(bool v) {
+    if (v == glassesActive_) return;
+    glassesActive_ = v;
+    if (audio_) {
+        if (v) {
+            audio_->setSaucer(false);
+            audio_->setMusicEnabled(false);
+        } else if (state_ == PLAYING || state_ == LEVEL_CLEAR) {
+            audio_->setMusicEnabled(soundEnabled_);
+        }
+    }
 }
 
 void Game::onPointerDown(int id, float x, float y) {
@@ -206,7 +225,8 @@ static constexpr float kGearWY      = -0.82f;   // y in world space (top area)
 // Settings row y-positions — shared between drawSettingsScreen() and the tap handler.
 static constexpr float kSettingSoundY    = -0.15f;
 static constexpr float kSettingAutoPlayY =  0.10f;
-static constexpr float kSettingBackY     =  0.52f;
+static constexpr float kSettingGlassesY  =  0.35f;
+static constexpr float kSettingBackY     =  0.66f;
 
 void Game::loadSettings() {
     if (settingsPath_[0] == '\0') return;
@@ -233,6 +253,7 @@ void Game::saveSettings() {
 }
 
 bool Game::isGearTap(float px, float py) const {
+    if (controlMode_ == CONTROL_TOUCHBAR) return false;  // no gear on the glasses
     float wy = 2.0f * py / vh_ - 1.0f;
     float wx = (2.0f * px / vw_ - 1.0f) * asp_;
     float dx = wx - (asp_ - kGearOffsetX), dy = wy - kGearWY;
@@ -463,6 +484,10 @@ void Game::update(float dt) {
             break;
         }
         case PLAYING: {
+            // While the game runs on the glasses, the phone instance freezes
+            // (Settings stays reachable via the gear to bring it back).
+            if (glassesActive_ && controlMode_ == CONTROL_STRIP) break;
+
             // Reset AI intents; updateAutoPlay sets them when autopilot is on.
             aiMove_ = false; aiFire_ = false;
             if (autoPlayActive_) updateAutoPlay(dt);
@@ -520,6 +545,13 @@ void Game::update(float dt) {
                 } else if (fabsf(wy - kSettingAutoPlayY) < kHitH && fabsf(wx) < kHitW) {
                     autoPlayActive_ = !autoPlayActive_;
                     saveSettings();
+                } else if (fabsf(wy - kSettingGlassesY) < kHitH && fabsf(wx) < kHitW) {
+                    if (glassesActive_) {
+                        if (glassesExit_) glassesExit_();
+                    } else if (glassesConnected_) {
+                        if (glassesLaunch_) glassesLaunch_();
+                    }
+                    // Not connected: the row is informational only.
                 } else if (fabsf(wy - kSettingBackY) < kHitH && fabsf(wx) < 0.15f) {
                     onPointersCancel();
                     state_ = prevState_;
@@ -1253,6 +1285,35 @@ void Game::drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float siz
          0.03f, 0.04f, 0.09f, a);
 }
 
+// A pair of glasses: two lens rings joined by a bridge, with short temples.
+void Game::drawGlassesIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,
+                           float r, float g, float b, float a) {
+    const float lensR  = size * 0.55f;
+    const float lensDX = size * 0.72f;
+    for (int s = -1; s <= 1; s += 2) {
+        emit(out, SHAPE_DISC, cx + s * lensDX, cy, lensR, lensR, 0.0f, r, g, b, a);
+        emit(out, SHAPE_DISC, cx + s * lensDX, cy, lensR * 0.62f, lensR * 0.62f, 0.0f,
+             0.04f, 0.06f, 0.14f, a);   // punch the lens hole in overlay colour
+    }
+    // Bridge
+    emit(out, SHAPE_QUAD, cx, cy - lensR * 0.35f, lensDX - lensR * 0.8f, size * 0.10f,
+         0.0f, r, g, b, a);
+    // Temples
+    for (int s = -1; s <= 1; s += 2)
+        emit(out, SHAPE_QUAD, cx + s * (lensDX + lensR * 1.15f), cy - lensR * 0.25f,
+             lensR * 0.55f, size * 0.09f, 0.0f, r, g, b, a);
+}
+
+// Phone-side banner while the game runs on the glasses.
+void Game::drawOnGlassesOverlay(std::vector<DrawCmd>& out) {
+    emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f, 0.03f, 0.05f, 0.12f, 0.80f);
+    float pulse = 0.6f + 0.4f * sinf(animTime_ * 3.0f);
+    drawGlassesIcon(out, 0.0f, -0.22f, 0.10f, 0.35f, 0.95f, 0.55f, pulse);
+    drawText(out, "ON GLASSES", 0.0f, 0.0f, 0.070f, 0.35f, 0.95f, 0.55f, 1.0f);
+    drawText(out, "OPEN SETTINGS", 0.0f, 0.16f, 0.038f, 0.65f, 0.72f, 0.85f, 0.9f);
+    drawText(out, "TO PLAY ON PHONE", 0.0f, 0.24f, 0.038f, 0.65f, 0.72f, 0.85f, 0.9f);
+}
+
 void Game::drawSettingsScreen(std::vector<DrawCmd>& out) {
     // Full-screen dark overlay
     emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f, 0.04f, 0.06f, 0.14f, 0.93f);
@@ -1283,6 +1344,24 @@ void Game::drawSettingsScreen(std::vector<DrawCmd>& out) {
              autoPlayActive_ ? 0.35f : 0.65f,
              autoPlayActive_ ? 1.00f : 0.45f,
              autoPlayActive_ ? 0.35f : 0.45f, 1.0f);
+
+    // Glasses row: icon + state. Informational when nothing is paired,
+    // otherwise a hand-off toggle between phone and glasses.
+    drawGlassesIcon(out, labelX + 0.06f, kSettingGlassesY, 0.055f,
+                    glassesConnected_ ? 0.35f : 0.45f,
+                    glassesConnected_ ? 0.95f : 0.50f,
+                    glassesConnected_ ? 0.55f : 0.55f,
+                    glassesConnected_ ? 1.0f : 0.55f);
+    if (glassesActive_) {
+        drawText(out, "BACK TO PHONE", 0.10f, kSettingGlassesY, 0.042f,
+                 1.00f, 0.85f, 0.20f, 1.0f);
+    } else if (glassesConnected_) {
+        drawText(out, "PLAY ON GLASSES", 0.10f, kSettingGlassesY, 0.042f,
+                 0.35f, 1.00f, 0.55f, 1.0f);
+    } else {
+        drawText(out, "NO GLASSES", 0.10f, kSettingGlassesY, 0.042f,
+                 0.55f, 0.58f, 0.65f, 0.75f);
+    }
 
     // Back button
     emit(out, SHAPE_QUAD, 0.0f, kSettingBackY, 0.12f, 0.052f, 0.0f, 0.22f, 0.22f, 0.25f, 0.82f);
@@ -1429,8 +1508,9 @@ void Game::render(std::vector<DrawCmd>& out) {
         shakeX_ = savedShakeX; shakeY_ = savedShakeY;
     }
 
-    // Control strip — shake-free, active gameplay only.
-    if (state_ == PLAYING) {
+    // Control strip — shake-free, active gameplay only, phone mode only (the
+    // glasses touchbar has no on-screen counterpart).
+    if (state_ == PLAYING && controlMode_ == CONTROL_STRIP) {
         float savedShakeX = shakeX_, savedShakeY = shakeY_;
         shakeX_ = 0.0f; shakeY_ = 0.0f;
         drawControlStrip(out);
@@ -1505,8 +1585,18 @@ void Game::render(std::vector<DrawCmd>& out) {
         drawShip(out, 0.0f, 0.5f, 0.05f, 0.0f, 0.3f + 0.6f * pulse);
     }
 
-    // ── Gear button — shake-free, top-right corner, every state but SETTINGS ─
-    if (state_ != SETTINGS) {
+    // ── "On glasses" banner — phone instance only, under the gear so
+    //    Settings stays reachable to bring the game back ────────────────────
+    if (glassesActive_ && controlMode_ == CONTROL_STRIP && state_ != SETTINGS) {
+        float svX = shakeX_, svY = shakeY_;
+        shakeX_ = shakeY_ = 0.0f;
+        drawOnGlassesOverlay(out);
+        shakeX_ = svX; shakeY_ = svY;
+    }
+
+    // ── Gear button — shake-free, top-right corner, every state but SETTINGS
+    //    (and never on the glasses: Settings lives on the phone) ────────────
+    if (state_ != SETTINGS && controlMode_ == CONTROL_STRIP) {
         float svX = shakeX_, svY = shakeY_;
         shakeX_ = shakeY_ = 0.0f;
         float gearWX = asp_ - kGearOffsetX, gearWY = kGearWY;
@@ -1533,5 +1623,10 @@ void Game::render(std::vector<DrawCmd>& out) {
 }
 
 void Game::clearColor(float out[3]) const {
+    if (controlMode_ == CONTROL_TOUCHBAR) {
+        // Pure black renders transparent on additive AR lenses.
+        out[0] = 0.0f; out[1] = 0.0f; out[2] = 0.0f;
+        return;
+    }
     out[0] = 0.03f; out[1] = 0.04f; out[2] = 0.09f;
 }

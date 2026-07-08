@@ -4,6 +4,7 @@
 #include <vulkan/vulkan_android.h>
 #include <android/native_window.h>
 
+#include <cstddef>
 #include <cstring>
 #include <cmath>
 #include <array>
@@ -16,11 +17,14 @@ static const uint32_t kFragSpv[] =
 #include "shape_frag.spv.h"
 ;
 
-// CPU mirror of the push-constant block (48 bytes, std430-ish layout).
-struct Push {
+// Per-instance vertex data (48 bytes) — one entry per DrawCmd, written to a
+// host-visible buffer each frame. Consecutive DrawCmds with the same shape
+// become one instanced draw, which keeps the guest->host Vulkan command
+// stream small (important under emulation, cheap everywhere).
+struct InstanceData {
     float mtx[4];
     float trans[2];
-    float style[2];  // x: FillStyle, y: noise seed
+    float style[2];  // x: FillStyle, y: reserved
     float color[4];
 };
 
@@ -208,16 +212,12 @@ bool VkRenderer::ensureDevice() {
     vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
 
     if (!createVertexBuffer()) return false;
+    if (!createInstanceBuffers()) return false;
     if (!createSyncAndCommands()) return false;
 
-    // Pipeline layout: one push-constant range shared by both stages.
-    VkPushConstantRange pcr{};
-    pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    pcr.offset = 0;
-    pcr.size = sizeof(Push);
+    // Pipeline layout: all per-draw data travels as instance attributes, so
+    // no descriptors and no push constants.
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    plci.pushConstantRangeCount = 1;
-    plci.pPushConstantRanges = &pcr;
     VK_CHECK(vkCreatePipelineLayout(device_, &plci, nullptr, &pipelineLayout_));
 
     deviceReady_ = true;
@@ -391,6 +391,31 @@ bool VkRenderer::createVertexBuffer() {
     return true;
 }
 
+// One host-visible, persistently-mapped instance buffer per frame in flight.
+bool VkRenderer::createInstanceBuffers() {
+    VkDeviceSize size = kMaxInstances * sizeof(InstanceData);
+    for (int i = 0; i < kFramesInFlight; i++) {
+        VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bci.size = size;
+        bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        VK_CHECK(vkCreateBuffer(device_, &bci, nullptr, &instBuf_[i]));
+
+        VkMemoryRequirements req;
+        vkGetBufferMemoryRequirements(device_, instBuf_[i], &req);
+        VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        mai.allocationSize = req.size;
+        mai.memoryTypeIndex = findMemoryType(
+            req.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (mai.memoryTypeIndex == UINT32_MAX) { LOGE("No host-visible memory"); return false; }
+        VK_CHECK(vkAllocateMemory(device_, &mai, nullptr, &instMem_[i]));
+        VK_CHECK(vkBindBufferMemory(device_, instBuf_[i], instMem_[i], 0));
+        VK_CHECK(vkMapMemory(device_, instMem_[i], 0, size, 0, &instMapped_[i]));
+    }
+    return true;
+}
+
 bool VkRenderer::createSyncAndCommands() {
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -474,13 +499,24 @@ bool VkRenderer::createPipeline() {
     stages[1].module = fs;
     stages[1].pName = "main";
 
-    VkVertexInputBindingDescription bind{0, sizeof(float) * 2, VK_VERTEX_INPUT_RATE_VERTEX};
-    VkVertexInputAttributeDescription attr{0, 0, VK_FORMAT_R32G32_SFLOAT, 0};
+    // Binding 0: per-vertex position. Binding 1: per-instance transform,
+    // translation, style and colour (matches InstanceData).
+    VkVertexInputBindingDescription binds[2] = {
+        {0, sizeof(float) * 2,   VK_VERTEX_INPUT_RATE_VERTEX},
+        {1, sizeof(InstanceData), VK_VERTEX_INPUT_RATE_INSTANCE},
+    };
+    VkVertexInputAttributeDescription attrs[5] = {
+        {0, 0, VK_FORMAT_R32G32_SFLOAT,       0},
+        {1, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(InstanceData, mtx)},
+        {2, 1, VK_FORMAT_R32G32_SFLOAT,       offsetof(InstanceData, trans)},
+        {3, 1, VK_FORMAT_R32G32_SFLOAT,       offsetof(InstanceData, style)},
+        {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(InstanceData, color)},
+    };
     VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    vi.vertexBindingDescriptionCount = 1;
-    vi.pVertexBindingDescriptions = &bind;
-    vi.vertexAttributeDescriptionCount = 1;
-    vi.pVertexAttributeDescriptions = &attr;
+    vi.vertexBindingDescriptionCount = 2;
+    vi.pVertexBindingDescriptions = binds;
+    vi.vertexAttributeDescriptionCount = 5;
+    vi.pVertexAttributeDescriptions = attrs;
 
     VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -563,9 +599,23 @@ bool VkRenderer::createSwapchain() {
     }
     format_ = chosen.format;
 
-    uint32_t imageCount = caps.minImageCount + 1;
+    // Low-latency mode keeps the queue as short as the driver allows; the
+    // default adds one image for smooth pipelining.
+    uint32_t imageCount = lowLatency_ ? caps.minImageCount : caps.minImageCount + 1;
     if (caps.maxImageCount > 0 && imageCount > caps.maxImageCount)
         imageCount = caps.maxImageCount;
+
+    // FIFO is always supported; in low-latency mode prefer MAILBOX (newest
+    // frame replaces the queued one instead of waiting behind it).
+    VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    if (lowLatency_) {
+        uint32_t pmCount = 0;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(phys_, surface_, &pmCount, nullptr);
+        std::vector<VkPresentModeKHR> modes(pmCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(phys_, surface_, &pmCount, modes.data());
+        for (auto m : modes)
+            if (m == VK_PRESENT_MODE_MAILBOX_KHR) { presentMode = m; break; }
+    }
 
     VkSwapchainCreateInfoKHR sci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
     sci.surface = surface_;
@@ -578,9 +628,12 @@ bool VkRenderer::createSwapchain() {
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     sci.preTransform = caps.currentTransform;
     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    sci.presentMode = VK_PRESENT_MODE_FIFO_KHR;  // always supported
+    sci.presentMode = presentMode;
     sci.clipped = VK_TRUE;
     VK_CHECK(vkCreateSwapchainKHR(device_, &sci, nullptr, &swapchain_));
+    if (lowLatency_)
+        LOGI("Low-latency swapchain: %u images, present mode %d",
+             imageCount, (int)presentMode);
 
     uint32_t n = 0;
     vkGetSwapchainImagesKHR(device_, swapchain_, &n, nullptr);
@@ -664,27 +717,50 @@ void VkRenderer::recordCommandBuffer(VkCommandBuffer cb, uint32_t imageIndex,
     rp.pClearValues = &cv;
     vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
 
-    VkViewport vpt{0, 0, (float)extent_.width, (float)extent_.height, 0.0f, 1.0f};
-    VkRect2D sc{{0, 0}, extent_};
+    // Centered viewport, scaled by renderScale_ (1.0 = full surface). The
+    // render pass has already cleared the whole framebuffer, so the surround
+    // is clear-colour (black = transparent on AR lenses).
+    float vw = extent_.width * renderScale_;
+    float vh = extent_.height * renderScale_;
+    float vx = (extent_.width - vw) * 0.5f;
+    float vy = (extent_.height - vh) * 0.5f;
+    VkViewport vpt{vx, vy, vw, vh, 0.0f, 1.0f};
+    VkRect2D sc{{(int32_t)vx, (int32_t)vy}, {(uint32_t)vw, (uint32_t)vh}};
     vkCmdSetViewport(cb, 0, 1, &vpt);
     vkCmdSetScissor(cb, 0, 1, &sc);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
 
-    VkDeviceSize off = 0;
-    vkCmdBindVertexBuffers(cb, 0, 1, &vbo_, &off);
+    // Write this frame's per-instance data (in submission order, so
+    // firstInstance below indexes straight into it).
+    size_t count = cmds.size();
+    if (count > kMaxInstances) count = kMaxInstances;
+    auto* inst = static_cast<InstanceData*>(instMapped_[frame_]);
+    for (size_t i = 0; i < count; i++) {
+        const auto& c = cmds[i];
+        InstanceData& d = inst[i];
+        d.mtx[0] = c.mtx[0]; d.mtx[1] = c.mtx[1];
+        d.mtx[2] = c.mtx[2]; d.mtx[3] = c.mtx[3];
+        d.trans[0] = c.tx; d.trans[1] = c.ty;
+        d.style[0] = c.style; d.style[1] = c.seed;
+        d.color[0] = c.color[0]; d.color[1] = c.color[1];
+        d.color[2] = c.color[2]; d.color[3] = c.color[3];
+    }
 
-    for (const auto& c : cmds) {
-        Push p{};
-        p.mtx[0] = c.mtx[0]; p.mtx[1] = c.mtx[1];
-        p.mtx[2] = c.mtx[2]; p.mtx[3] = c.mtx[3];
-        p.trans[0] = c.tx; p.trans[1] = c.ty;
-        p.style[0] = c.style; p.style[1] = c.seed;
-        p.color[0] = c.color[0]; p.color[1] = c.color[1];
-        p.color[2] = c.color[2]; p.color[3] = c.color[3];
-        vkCmdPushConstants(cb, pipelineLayout_,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(Push), &p);
-        vkCmdDraw(cb, shapeCount_[c.shape], 1, shapeFirst_[c.shape], 0);
+    VkBuffer bufs[2] = {vbo_, instBuf_[frame_]};
+    VkDeviceSize offs[2] = {0, 0};
+    vkCmdBindVertexBuffers(cb, 0, 2, bufs, offs);
+
+    // Batch consecutive DrawCmds sharing a shape into one instanced draw —
+    // painter's order is preserved, but the command stream shrinks from two
+    // calls per DrawCmd to one call per run.
+    size_t i = 0;
+    while (i < count) {
+        int shape = cmds[i].shape;
+        size_t j = i + 1;
+        while (j < count && cmds[j].shape == shape) j++;
+        vkCmdDraw(cb, shapeCount_[shape], (uint32_t)(j - i),
+                  shapeFirst_[shape], (uint32_t)i);
+        i = j;
     }
 
     vkCmdEndRenderPass(cb);
@@ -753,7 +829,7 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
         createSwapchain();
     }
 
-    frame_ = (frame_ + 1) % kFramesInFlight;
+    frame_ = (frame_ + 1) % framesInFlight();
 }
 
 void VkRenderer::cleanup() {
@@ -765,6 +841,10 @@ void VkRenderer::cleanup() {
     if (pipelineLayout_) vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
     if (vbo_) vkDestroyBuffer(device_, vbo_, nullptr);
     if (vboMem_) vkFreeMemory(device_, vboMem_, nullptr);
+    for (int i = 0; i < kFramesInFlight; i++) {
+        if (instBuf_[i]) vkDestroyBuffer(device_, instBuf_[i], nullptr);
+        if (instMem_[i]) { vkUnmapMemory(device_, instMem_[i]); vkFreeMemory(device_, instMem_[i], nullptr); }
+    }
     for (int i = 0; i < kFramesInFlight; i++) {
         if (imageAvailable_[i]) vkDestroySemaphore(device_, imageAvailable_[i], nullptr);
         if (renderFinished_[i]) vkDestroySemaphore(device_, renderFinished_[i], nullptr);
