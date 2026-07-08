@@ -1345,23 +1345,36 @@ void Game::drawSettingsScreen(std::vector<DrawCmd>& out) {
              autoPlayActive_ ? 1.00f : 0.45f,
              autoPlayActive_ ? 0.35f : 0.45f, 1.0f);
 
-    // Glasses row: icon + state. Informational when nothing is paired,
-    // otherwise a hand-off toggle between phone and glasses.
-    drawGlassesIcon(out, labelX + 0.06f, kSettingGlassesY, 0.055f,
-                    glassesConnected_ ? 0.35f : 0.45f,
-                    glassesConnected_ ? 0.95f : 0.50f,
-                    glassesConnected_ ? 0.55f : 0.55f,
-                    glassesConnected_ ? 1.0f : 0.55f);
+    // Glasses row — same label + chip pattern as the toggles above. The chip
+    // is the action: PLAY hands the game to the glasses, PHONE brings it
+    // back, NONE means nothing is paired. Short chip words fit every screen
+    // width (the old free-form text collided with the icon on narrow folds).
+    const char* chip;
+    float gr, gg, gb, ga;          // icon + chip text colour
+    float br, bg, bb, ba;          // chip background
     if (glassesActive_) {
-        drawText(out, "BACK TO PHONE", 0.10f, kSettingGlassesY, 0.042f,
-                 1.00f, 0.85f, 0.20f, 1.0f);
+        chip = "PHONE";
+        gr = 1.00f; gg = 0.85f; gb = 0.20f; ga = 1.0f;
+        br = 0.40f; bg = 0.32f; bb = 0.05f; ba = 0.75f;
     } else if (glassesConnected_) {
-        drawText(out, "PLAY ON GLASSES", 0.10f, kSettingGlassesY, 0.042f,
-                 0.35f, 1.00f, 0.55f, 1.0f);
+        chip = "PLAY";
+        gr = 0.35f; gg = 1.00f; gb = 0.55f; ga = 1.0f;
+        br = 0.08f; bg = 0.48f; bb = 0.08f; ba = 0.75f;
     } else {
-        drawText(out, "NO GLASSES", 0.10f, kSettingGlassesY, 0.042f,
-                 0.55f, 0.58f, 0.65f, 0.75f);
+        chip = "NONE";
+        gr = 0.55f; gg = 0.58f; gb = 0.65f; ga = 0.7f;
+        br = 0.20f; bg = 0.20f; bb = 0.22f; ba = 0.60f;
     }
+    drawText(out, "GLASSES", labelX, kSettingGlassesY, 0.055f, 0.80f, 0.85f, 0.90f, 0.9f);
+    // Small glasses icon centred in whatever gap the screen width leaves
+    // between the label and the chip (narrow folds leave very little).
+    const float labelHalf = 7 * 0.055f * 0.95f * 0.5f;
+    const float gapLeft   = labelX + labelHalf;
+    const float gapRight  = toggleX - 0.105f;
+    drawGlassesIcon(out, (gapLeft + gapRight) * 0.5f, kSettingGlassesY, 0.030f,
+                    gr, gg, gb, ga);
+    emit(out, SHAPE_QUAD, toggleX, kSettingGlassesY, 0.100f, 0.040f, 0.0f, br, bg, bb, ba);
+    drawText(out, chip, toggleX, kSettingGlassesY, 0.040f, gr, gg, gb, 1.0f);
 
     // Back button
     emit(out, SHAPE_QUAD, 0.0f, kSettingBackY, 0.12f, 0.052f, 0.0f, 0.22f, 0.22f, 0.25f, 0.82f);
