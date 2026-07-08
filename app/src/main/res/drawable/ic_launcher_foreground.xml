@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Soft cyan engine glow behind the ship -->
+    <path android:pathData="M54,54 m-32,0 a32,32 0 1,0 64,0 a32,32 0 1,0 -64,0 z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="54" android:centerY="58"
+                android:gradientRadius="32"
+                android:startColor="#5532E6FF"
+                android:endColor="#0032E6FF" />
+        </aapt:attr>
+    </path>
+
+    <!-- Starship body: swept-wing arrow, nose up, with cyan gradient -->
+    <path
+        android:pathData="M54,22 L62,58 L80,82 L62,73 L54,84 L46,73 L28,82 L46,58 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="54" android:startY="22"
+                android:endX="54" android:endY="84"
+                android:startColor="#A6F2FF"
+                android:endColor="#34BEEA" />
+        </aapt:attr>
+    </path>
+
+    <!-- Bright edge highlight along the nose -->
+    <path
+        android:fillColor="#E8FCFF"
+        android:pathData="M54,22 L57,36 L51,36 Z" />
+
+    <!-- Cockpit -->
+    <path
+        android:fillColor="#0E1430"
+        android:pathData="M54,38 L57,55 L51,55 Z" />
+
+    <!-- Engine flame -->
+    <path
+        android:fillColor="#FFD66B"
+        android:pathData="M50,84 L54,95 L58,84 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M52,84 L54,90 L56,84 Z" />
+</vector>
