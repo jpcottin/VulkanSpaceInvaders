@@ -8,6 +8,20 @@ increasingly difficult levels. Sibling project of
 hand-written renderer, procedural audio engine and CI architecture, with a
 brand-new game on top.
 
+## Screenshots
+
+Captured on a Pixel 10 Pro Fold emulator with **Auto Play** driving — the
+layout adapts live to the cover and inner displays (fold/unfold rebuilds the
+Vulkan swapchain and the world re-lays out from the new aspect ratio).
+
+| Title (folded) | Auto Play in action (unfolded) |
+|:---:|:---:|
+| <img src="docs/screenshots/title.png" width="360" alt="Title screen with high-score podium"> | <img src="docs/screenshots/autoplay-action.png" width="420" alt="Auto Play clearing a wave with rapid fire and triple shot active"> |
+
+| Level clear (folded) | Game over — new high score |
+|:---:|:---:|
+| <img src="docs/screenshots/level-clear.png" width="360" alt="Level clear screen with power-up timers and AUTO badge"> | <img src="docs/screenshots/game-over.png" width="360" alt="Game over screen with gold pulsing new high score"> |
+
 ## Gameplay
 
 | Control | Action |
@@ -32,13 +46,18 @@ brand-new game on top.
 - **Mystery saucer:** crosses the top of the screen with a warbling siren —
   100 pts ×level, with the bonus value flashed where it died.
 - **Power-ups:** 8% drop chance on each kill: 🔵 Shield (absorbs one hit,
-  lasts until hit) · 🟡 Rapid fire (halved cooldown, 8 s with HUD timer bar).
+  lasts until hit) · 🟡 Rapid fire (halved cooldown, 8 s with HUD timer bar) ·
+  🟢 Triple shot (a 3-laser volley — centre plus ±8° side lasers, 8 s).
   +25 pts ×level on pickup.
 - **Lives:** 3. Lose one to a bomb hit or an invader collision (the invader is
   destroyed too); invulnerability blinks after each hit.
 - **Invasion:** if the wave reaches the control strip, the invasion succeeds —
   **instant game over**, regardless of remaining lives.
-- **Level clear:** +100 pts ×level. Clear level 10 to win.
+- **Level clear:** +100 pts ×level.
+- **Boss mothership at level 10:** a giant 16-HP saucer drifts sinusoidally
+  across the top (health bar + "BOSS" label), lobbing bombs **aimed at you**,
+  guarded by a two-row escort wave. Clearing the escort isn't enough — only
+  destroying the mothership wins the game (+250 pts ×level).
 - **HUD:** score (top-left) · lives as mini-ships (top-center) · level
   (top-right) · active power-ups with timer bars (left edge).
 - **Ship banking:** the ship tilts ±20° into its direction of travel.
@@ -53,11 +72,14 @@ brand-new game on top.
   with the wave.
 - **Settings:** gear icon opens an overlay from any game state. Toggles:
   Sound on/off, Auto Play. Both persist across app restarts.
-- **Auto Play:** AI autopilot — dodges incoming bombs, intercepts falling
-  power-ups when nothing is shooting at it, lead-aims the saucer and the
-  marching columns, and fires when aligned. It drives the exact same control
-  path as a finger. Activate from Settings; the gear turns green with a
-  pulsing "AUTO" label while active.
+- **Auto Play:** AI autopilot — dodges incoming bombs (including the boss's
+  angled shots, by predicted impact point), intercepts falling power-ups when
+  nothing is shooting at it, lead-aims the boss, the saucer and the marching
+  columns, and fires when aligned. It drives the exact same control path as a
+  finger. Activate from Settings; the gear turns green with a pulsing "AUTO"
+  label while active.
+- **Foldable-aware:** fold or unfold mid-game and the layout re-adapts
+  instantly — no stretching (see Tech).
 
 ## Tech
 
@@ -84,6 +106,13 @@ brand-new game on top.
   envelope, and an 80 BPM ambient track (pad + bass + arpeggio). No audio files.
 - **GLSL → SPIR-V** compiled at build time with the NDK's `glslc` (`-mfmt=c`)
   and `#include`d directly as C arrays — no runtime shader compiler, no assets.
+- **Adaptive to foldables** — the whole layout derives from the surface aspect
+  ratio each frame, and the renderer re-checks the surface extent every frame:
+  when a fold/unfold resizes the window in place (the activity survives via
+  `configChanges`), the swapchain is rebuilt at the new resolution instead of
+  letting the compositor stretch the old one. The Compose-oriented adaptive
+  layout tooling doesn't apply to a native Vulkan game — this is its NDK
+  equivalent.
 - **Runtime diagnostics via Logcat** — every launch logs a full Vulkan
   extension audit (`✓ USED` / `~ PRESENT` / `✗ ABSENT` / `? UNKNOWN`) for
   instance and device extensions, and a periodic FPS line (frames/s, average
@@ -110,18 +139,21 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-55 tests covering the formation (rows per level, march direction, edge
+65 tests covering the formation (rows per level, march direction, edge
 reversal + descent, speed-up as the wave thins, side-margin containment),
 invasion game-over, alien-ship collision, touch-strip ship control (steer,
 stop-on-finger, clamping, zone boundaries), firing (auto-fire, cooldown,
 3-laser cap, despawn), per-tier kill scoring, bombs (drop cadence, concurrency
 cap, ship hits, invulnerability window, shoot-down), the saucer (crossing,
 despawn, bonus payout), power-ups (pickup, shield absorb, shield persistence,
-rapid-fire cooldown + expiry), level progression (clear bonus, advance, win at
-10, game over on zero lives), the settings state machine (gear tap, toggles,
-back button, persistence across instances), high-score persistence, and the
-Auto Play AI (autonomous fire, bomb dodging, power-up interception, saucer
-lead-aiming, wave completion). Run on a connected device or emulator:
+rapid-fire cooldown + expiry, triple-shot volley count + exact ±8° angles +
+expiry), the level-10 boss (spawn + HP, sine drift, aimed bombs,
+escort-doesn't-clear rule, kill-to-win payout, Auto Play targeting), level
+progression (clear bonus, advance, boss handoff at 10, game over on zero
+lives), the settings state machine (gear tap, toggles, back button,
+persistence across instances), high-score persistence, and the Auto Play AI
+(autonomous fire, bomb dodging, power-up interception, saucer lead-aiming,
+wave completion). Run on a connected device or emulator:
 
 ```bash
 # ARM device (default)
@@ -151,7 +183,7 @@ Three GitHub Actions jobs run on every push and pull request to `main`:
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs the 55 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Native Tests** | Runs the 65 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
 | **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators and captures an in-game screenshot via `UiAutomation`. Blocking on API 34 + 36; non-blocking preview legs on API 37.0 (`google_apis_ps16k`, 16 KB pages) across the swiftshader / lavapipe / auto GPU backends | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
 
 ## License
