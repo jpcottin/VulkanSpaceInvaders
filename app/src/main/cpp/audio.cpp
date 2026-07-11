@@ -7,7 +7,8 @@
 
 // ── Impl ──────────────────────────────────────────────────────────────────────
 
-struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
+struct AudioEngine::Impl : public oboe::AudioStreamDataCallback,
+                           public oboe::AudioStreamErrorCallback {
 
     static constexpr int   kSR     = 44100;
     static constexpr int   kVoices = 8;
@@ -248,7 +249,8 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
                ->setSampleRate(kSR)
                ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
                ->setSharingMode(oboe::SharingMode::Exclusive)
-               ->setDataCallback(this);
+               ->setDataCallback(this)
+               ->setErrorCallback(this);
 
         oboe::Result r = builder.openStream(stream);
         if (r != oboe::Result::OK) {
@@ -257,6 +259,15 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback {
         }
         stream->requestStart();
         return true;
+    }
+
+    // Route changes (headphones unplugged, Bluetooth switch) disconnect the
+    // stream; without this, audio stays dead until the window is recreated.
+    // Oboe documents reopening from onErrorAfterClose as the standard pattern.
+    void onErrorAfterClose(oboe::AudioStream*, oboe::Result error) override {
+        LOGW("Audio stream closed (%s), reopening", oboe::convertToText(error));
+        stream.reset();
+        open();
     }
 
     void close() {

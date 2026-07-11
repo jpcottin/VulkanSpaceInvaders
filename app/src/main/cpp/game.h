@@ -132,6 +132,7 @@ private:
     float controlTargetX() const;
     void loadHighScores();
     void saveHighScores();
+    void mergeHighScore(long score, int level);
     void checkHighScore();
     void spawnDebris(float x, float y, float r, float cr, float cg, float cb);
 
@@ -182,6 +183,8 @@ private:
 public:
     void setAudioEngine(AudioEngine* a) { audio_ = a; }
     void setDataPath(const char* path);
+    // Re-read highscores/settings from disk (phone <-> glasses handoff).
+    void reloadFromDisk();
     void setHapticCallback(std::function<void()> fn) { haptic_ = std::move(fn); }
 
     // --- test / debug accessors ---

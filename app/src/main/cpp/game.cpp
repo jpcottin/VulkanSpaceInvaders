@@ -203,11 +203,40 @@ void Game::loadHighScores() {
     fclose(f);
 }
 
+// Insert a score at its rank unless the identical entry is already present.
+// Exact-duplicate skipping matters because the phone and glasses instances
+// load the same file: without it every merge would double the shared rows.
+void Game::mergeHighScore(long score, int level) {
+    if (score <= 0) return;
+    for (int i = 0; i < kMaxScores; i++)
+        if (highScores_[i].score == score && highScores_[i].level == level) return;
+    int pos = kMaxScores;
+    for (int i = 0; i < kMaxScores; i++)
+        if (score > highScores_[i].score) { pos = i; break; }
+    if (pos == kMaxScores) return;
+    for (int i = kMaxScores - 1; i > pos; i--) highScores_[i] = highScores_[i - 1];
+    highScores_[pos] = {score, level};
+}
+
 void Game::saveHighScores() {
     if (dataPath_[0] == '\0') return;
+    // The other instance (phone vs glasses, same process, separate Game
+    // objects) may have saved since we loaded: merge the disk table into
+    // ours first so a stale in-memory copy never clobbers a saved score.
+    FILE* rf = fopen(dataPath_, "rb");
+    if (rf) {
+        struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } in;
+        if (fread(&in, sizeof(in), 1, rf) == 1 && in.magic == kHsMagic) {
+            int n = (int)in.count < kMaxScores ? (int)in.count : kMaxScores;
+            for (int i = 0; i < n; i++)
+                mergeHighScore((long)in.e[i].score, in.e[i].level);
+        }
+        fclose(rf);
+    }
+
     FILE* f = fopen(dataPath_, "wb");
     if (!f) return;
-    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf;
+    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf{};
     buf.magic = kHsMagic;
     buf.count = kMaxScores;
     for (int i = 0; i < kMaxScores; i++) {
@@ -216,6 +245,13 @@ void Game::saveHighScores() {
     }
     fwrite(&buf, sizeof(buf), 1, f);
     fclose(f);
+}
+
+// Re-read persisted state. The phone and glasses instances share the files;
+// whichever regains focus adopts what the other saved while it was away.
+void Game::reloadFromDisk() {
+    loadHighScores();
+    loadSettings();
 }
 
 static const uint32_t kSettingsMagic = 0x53455454u;  // "SETT"

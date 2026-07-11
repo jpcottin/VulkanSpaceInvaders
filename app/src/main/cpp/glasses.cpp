@@ -77,7 +77,8 @@ void glassesStartMonitoring(android_app* app) {
     if (!cls) { LOGW("GlassesBridge class not found"); return; }
     jmethodID m = env->GetStaticMethodID(cls, "startMonitoring",
                                          "(Landroid/content/Context;)V");
-    if (m) env->CallStaticVoidMethod(cls, m, app->activity->clazz);
+    if (!m) { env->ExceptionClear(); LOGW("startMonitoring not found"); return; }
+    env->CallStaticVoidMethod(cls, m, app->activity->clazz);
     if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
@@ -88,7 +89,9 @@ bool glassesIsConnected(android_app* app) {
     jclass cls = bridgeClass(env, app);
     if (!cls) return false;
     jmethodID m = env->GetStaticMethodID(cls, "isConnected", "()Z");
-    if (!m) return false;
+    // A failed lookup leaves NoSuchMethodError pending; detaching the thread
+    // (ScopedEnv destructor) with it pending would kill the process.
+    if (!m) { env->ExceptionClear(); return false; }
     jboolean r = env->CallStaticBooleanMethod(cls, m);
     if (env->ExceptionCheck()) { env->ExceptionClear(); return false; }
     return r == JNI_TRUE;
@@ -102,7 +105,7 @@ bool glassesLaunch(android_app* app) {
     if (!cls) return false;
     jmethodID m = env->GetStaticMethodID(cls, "launchOnGlasses",
                                          "(Landroid/app/Activity;)Z");
-    if (!m) return false;
+    if (!m) { env->ExceptionClear(); return false; }
     jboolean r = env->CallStaticBooleanMethod(cls, m, app->activity->clazz);
     if (env->ExceptionCheck()) { env->ExceptionClear(); return false; }
     return r == JNI_TRUE;
