@@ -494,15 +494,17 @@ void Game::update(float dt) {
             aiMove_ = false; aiFire_ = false;
             if (autoPlayActive_) updateAutoPlay(dt);
 
-            // One frame of gameplay, in order. State may flip to GAME_OVER
-            // mid-sequence; later steps still run and re-check as needed.
+            // One frame of gameplay, in order. State may flip to GAME_OVER or
+            // WIN mid-sequence (fatal hit, invasion, boss kill); once it does,
+            // skip the remaining steps — checkHighScore() has already saved,
+            // so nothing may fire, score, or collect after death.
             updateShip(dt);
-            updateFormation(dt);
-            updateBoss(dt);
-            updateBombs(dt);
-            updateBullets(dt);
-            updateSaucer(dt);
-            updatePowerUps(dt);
+            if (state_ == PLAYING) updateFormation(dt);
+            if (state_ == PLAYING) updateBoss(dt);
+            if (state_ == PLAYING) updateBombs(dt);
+            if (state_ == PLAYING) updateBullets(dt);
+            if (state_ == PLAYING) updateSaucer(dt);
+            if (state_ == PLAYING) updatePowerUps(dt);
             removeDeadEntities();
             checkLevelClear();
             break;

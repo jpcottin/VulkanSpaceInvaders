@@ -400,6 +400,58 @@ TEST(Bombs, ThreeHitsEndTheGame) {
     EXPECT_TRUE(g.isGameOverForTest());
 }
 
+// The frame that kills the last life must not also score: updateBombs runs
+// before updateBullets, and checkHighScore() saves the moment the game ends,
+// so a laser landing later in the same frame would desync score from the
+// saved high score. The game is deterministic (fixed RNG seed), so a control
+// run pins down the exact frame the laser connects.
+TEST(Bombs, DeathFrameDoesNotScore) {
+    const float dt = 1.0f / 60.0f;
+
+    // Shared choreography: burn down to one life, park the ship under a
+    // bottom-row alien, and fire exactly one laser at it.
+    auto prepare = [&](Game& g) {
+        startPlaying(g);
+        for (int hit = 0; hit < 2; hit++) {
+            g.clearInvulnForTest();
+            g.spawnTestBomb(g.shipX(), 0.50f, 0.6f);
+            step(g, 0.6f);
+        }
+        float ax = g.alienXForTest(slot(2, 3));
+        g.setShipXForTest(ax);
+        g.onPointerDown(0, pxOf(ax), ctrlPy());
+        g.update(dt);                              // one shot; cooldown blocks more
+        g.onPointerUp(0);
+    };
+
+    // Control run: find the frame on which the laser connects.
+    Game control;
+    prepare(control);
+    ASSERT_EQ(control.lives(), 1);
+    ASSERT_EQ(control.bulletCount(), 1);
+    long before = control.score();
+    int killFrame = -1;
+    for (int f = 0; f < 120; f++) {
+        control.update(dt);
+        if (control.score() != before) { killFrame = f; break; }
+    }
+    ASSERT_GE(killFrame, 1) << "control laser never connected";
+
+    // Real run: identical inputs, but a bomb lands the fatal hit earlier in
+    // the laser's kill frame.
+    Game g;
+    prepare(g);
+    long preDeath = g.score();
+    for (int f = 0; f < killFrame; f++) g.update(dt);
+    ASSERT_TRUE(g.isPlayingForTest());
+    g.clearInvulnForTest();
+    g.spawnTestBomb(g.shipX(), g.shipY(), 0.01f);  // on the ship: hits this frame
+    g.update(dt);
+    ASSERT_TRUE(g.isGameOverForTest());
+    EXPECT_EQ(g.lives(), 0);
+    EXPECT_EQ(g.score(), preDeath) << "scored after the fatal hit";
+}
+
 // ── Saucer ───────────────────────────────────────────────────────────────────
 
 TEST(Saucer, CrossesAndDespawns) {
