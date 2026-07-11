@@ -285,6 +285,38 @@ TEST(Kills, LaserKillsAnAlienAndScores) {
     EXPECT_GT(g.score(), 0);
 }
 
+// Regression: at the clamped worst-case dt (0.05 s) a bullet moves 0.12 per
+// step — taller than an alien's whole hit box. Substepped collision must
+// still land the kill instead of tunneling through the row.
+TEST(Kills, LaserStillKillsAtClampedWorstCaseDt) {
+    Game g;
+    startPlaying(g);
+    g.onPointerDown(0, pxOf(0.0f), ctrlPy());
+    bool killed = false;
+    for (int i = 0; i < 200 && !killed; i++) {
+        g.setFormationXForTest(0.0f);     // hold the wave still over the ship
+        g.update(0.05f);                  // the dt clamp ceiling
+        killed = g.alienCount() < 24;
+    }
+    EXPECT_TRUE(killed);
+}
+
+// Regression: bullet and bomb close by ~0.17 per clamped frame — nearly 3x
+// their 0.06 collision diameter — so point-sampled collision whiffed head-on
+// interceptions. Substepped bullets sample finely enough that the unsampled
+// per-frame bomb move (< 0.06) can never leapfrog the hit window.
+TEST(Kills, LaserInterceptsABombAtClampedWorstCaseDt) {
+    Game g;
+    startPlaying(g);
+    g.setFormationYForTest(-3.0f);             // no aliens in the lane
+    g.clearInvulnForTest();
+    g.spawnTestBomb(0.0f, 0.10f, 0.9f);        // falling fast, dead ahead
+    g.onPointerDown(0, pxOf(0.0f), ctrlPy());
+    step(g, 1.0f, 0.05f);                      // the dt clamp ceiling
+    EXPECT_EQ(g.bombCount(), 0);
+    EXPECT_EQ(g.lives(), 3);                   // intercepted, not absorbed
+}
+
 TEST(Kills, BottomRowOctopusIsWorthTen) {
     Game g;
     startPlaying(g);
@@ -503,6 +535,20 @@ TEST(PowerUps, ShieldAbsorbsOneHit) {
     step(g, 0.5f);
     EXPECT_EQ(g.lives(), 3);
     EXPECT_FALSE(g.shieldActiveForTest());
+}
+
+// Regression: two hits landing in the same frame (or back to back before any
+// grace period) must cost only the shield, never the shield AND a life.
+TEST(PowerUps, ShieldHitGrantsGracePeriod) {
+    Game g;
+    startPlaying(g);
+    g.clearInvulnForTest();
+    g.activatePowerUpForTest((int)Game::PU_SHIELD);
+    g.spawnTestBomb(g.shipX(), g.shipY(), 0.01f);  // both on the ship:
+    g.spawnTestBomb(g.shipX(), g.shipY(), 0.01f);  // hit the same frame
+    g.update(1.0f / 60.0f);
+    EXPECT_FALSE(g.shieldActiveForTest());
+    EXPECT_EQ(g.lives(), 3);
 }
 
 TEST(PowerUps, ShieldPersistsUntilHit) {

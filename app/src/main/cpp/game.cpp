@@ -421,10 +421,13 @@ void Game::update(float dt) {
     animTime_ += dt;
 
     // Particles and explosions animate in all states.
+    // Drag is exponential decay, normalized to a 60 Hz reference so debris
+    // behaves the same at any refresh rate.
+    float drag = powf(0.88f, dt * 60.0f);
     for (auto& p : particles_) {
         if (!p.alive) continue;
         p.x  += p.vx * dt; p.y  += p.vy * dt;
-        p.vx *= 0.88f;     p.vy *= 0.88f; // drag
+        p.vx *= drag;      p.vy *= drag;
         p.rot += p.spin * dt;
         p.t   += dt;
         if (p.t >= p.maxLife) p.alive = false;
@@ -450,11 +453,11 @@ void Game::update(float dt) {
         if (s.y > 1.05f) { s.y = -1.05f; s.x = frange(-1.0f, 1.0f); }
     }
 
-    // Screen shake decay.
+    // Screen shake decay, 60 Hz-normalized like the particle drag above.
     if (shakeAmt_ > 0.0f) {
         shakeX_ = frange(-1.0f, 1.0f) * shakeAmt_ * 0.040f;
         shakeY_ = frange(-1.0f, 1.0f) * shakeAmt_ * 0.040f;
-        shakeAmt_ *= 0.78f;
+        shakeAmt_ *= powf(0.78f, dt * 60.0f);
         if (shakeAmt_ < 0.01f) { shakeAmt_ = 0.0f; shakeX_ = 0.0f; shakeY_ = 0.0f; }
     }
 
@@ -574,6 +577,9 @@ void Game::applyShipHit() {
     if (shieldActive_) {
         shieldActive_ = false;
         shakeAmt_ = 0.5f;
+        // Brief grace so two overlapping hits in one frame (adjacent aliens,
+        // alien + bomb) can't consume the shield and a life together.
+        invuln_ = 1.0f;
         return;
     }
     lives_--;
@@ -799,88 +805,97 @@ void Game::updateBullets(float dt) {
 
     for (auto& b : bullets_) {
         if (!b.alive) continue;
-        b.x += b.vx * dt;
-        b.y += b.vy * dt;
-        if (b.y < -1.05f || b.x > asp_ + 0.1f || b.x < -asp_ - 0.1f) {
-            b.alive = false; continue;
-        }
-
-        // Bullet vs bomb: shooting down an incoming bomb cancels both.
-        for (auto& bomb : bombs_) {
-            if (!bomb.alive) continue;
-            float dx = b.x - bomb.x, dy = b.y - bomb.y;
-            if (dx*dx + dy*dy < 0.030f * 0.030f) {
-                b.alive = false;
-                bomb.alive = false;
-                Explosion e;
-                e.x = bomb.x; e.y = bomb.y; e.radius = 0.020f;
-                e.t = 0.0f; e.maxLife = 0.12f;
-                e.cr = 1.0f; e.cg = 0.6f; e.cb = 0.2f; e.alive = true;
-                explosions_.push_back(e);
-                break;
+        // Substep the move so a fast bullet can't tunnel: a full 2.4-speed
+        // step is 0.04 at 60 fps — already most of a bomb's 0.06 collision
+        // diameter — and 0.12 at the clamped dt, taller than an alien's whole
+        // hit box. Collisions are checked at every substep position.
+        const float kMaxStep = 0.02f;
+        int steps = (int)((fabsf(b.vx) + fabsf(b.vy)) * dt / kMaxStep) + 1;
+        float sdt = dt / (float)steps;
+        for (int s = 0; s < steps && b.alive; s++) {
+            b.x += b.vx * sdt;
+            b.y += b.vy * sdt;
+            if (b.y < -1.05f || b.x > asp_ + 0.1f || b.x < -asp_ - 0.1f) {
+                b.alive = false; continue;
             }
-        }
-        if (!b.alive) continue;
 
-        // Bullet vs boss mothership
-        if (bossActive_ && boss_.alive &&
-            fabsf(b.x - boss_.x) < kBossHW + 0.010f &&
-            fabsf(b.y - kBossY) < kBossHH + 0.016f) {
-            b.alive = false;
-            boss_.hp--;
-            Explosion hitFlash;
-            hitFlash.x = b.x; hitFlash.y = kBossY + kBossHH;
-            hitFlash.radius = 0.035f;
-            hitFlash.t = 0.0f; hitFlash.maxLife = 0.12f;
-            hitFlash.cr = 1.0f; hitFlash.cg = 0.6f; hitFlash.cb = 0.1f;
-            hitFlash.alive = true;
-            explosions_.push_back(hitFlash);
-            if (boss_.hp <= 0) {
-                boss_.alive = false;
-                long bonus = (long)kBossScore * level_;
+            // Bullet vs bomb: shooting down an incoming bomb cancels both.
+            for (auto& bomb : bombs_) {
+                if (!bomb.alive) continue;
+                float dx = b.x - bomb.x, dy = b.y - bomb.y;
+                if (dx*dx + dy*dy < 0.030f * 0.030f) {
+                    b.alive = false;
+                    bomb.alive = false;
+                    Explosion e;
+                    e.x = bomb.x; e.y = bomb.y; e.radius = 0.020f;
+                    e.t = 0.0f; e.maxLife = 0.12f;
+                    e.cr = 1.0f; e.cg = 0.6f; e.cb = 0.2f; e.alive = true;
+                    explosions_.push_back(e);
+                    break;
+                }
+            }
+            if (!b.alive) continue;
+
+            // Bullet vs boss mothership
+            if (bossActive_ && boss_.alive &&
+                fabsf(b.x - boss_.x) < kBossHW + 0.010f &&
+                fabsf(b.y - kBossY) < kBossHH + 0.016f) {
+                b.alive = false;
+                boss_.hp--;
+                Explosion hitFlash;
+                hitFlash.x = b.x; hitFlash.y = kBossY + kBossHH;
+                hitFlash.radius = 0.035f;
+                hitFlash.t = 0.0f; hitFlash.maxLife = 0.12f;
+                hitFlash.cr = 1.0f; hitFlash.cg = 0.6f; hitFlash.cb = 0.1f;
+                hitFlash.alive = true;
+                explosions_.push_back(hitFlash);
+                if (boss_.hp <= 0) {
+                    boss_.alive = false;
+                    long bonus = (long)kBossScore * level_;
+                    score_ += bonus;
+                    bonusFlash_ = bonus;
+                    bonusFlashTimer_ = 0.9f;
+                    bonusFlashX_ = boss_.x; bonusFlashY_ = kBossY;
+                    spawnDebris(boss_.x, kBossY, kBossHW,        1.00f, 0.35f, 0.55f);
+                    spawnDebris(boss_.x, kBossY, kBossHW * 0.6f, 0.85f, 0.25f, 0.75f);
+                    if (audio_) audio_->setSaucer(false);
+                    if (audio_ && soundEnabled_) {
+                        audio_->triggerExplosion();
+                        audio_->triggerLevelClear();
+                    }
+                    state_ = WIN; stateTimer_ = 0.0f;
+                    checkHighScore();
+                }
+                continue;
+            }
+
+            // Bullet vs saucer
+            if (saucer_.alive &&
+                fabsf(b.x - saucer_.x) < 0.055f && fabsf(b.y - saucer_.y) < 0.035f) {
+                b.alive = false;
+                saucer_.alive = false;
+                long bonus = (long)kSaucerScore * level_;
                 score_ += bonus;
                 bonusFlash_ = bonus;
                 bonusFlashTimer_ = 0.9f;
-                bonusFlashX_ = boss_.x; bonusFlashY_ = kBossY;
-                spawnDebris(boss_.x, kBossY, kBossHW,        1.00f, 0.35f, 0.55f);
-                spawnDebris(boss_.x, kBossY, kBossHW * 0.6f, 0.85f, 0.25f, 0.75f);
+                bonusFlashX_ = saucer_.x; bonusFlashY_ = saucer_.y;
+                spawnDebris(saucer_.x, saucer_.y, 0.05f, 1.0f, 0.35f, 0.30f);
                 if (audio_) audio_->setSaucer(false);
-                if (audio_ && soundEnabled_) {
-                    audio_->triggerExplosion();
-                    audio_->triggerLevelClear();
+                if (audio_ && soundEnabled_) audio_->triggerExplosion();
+                continue;
+            }
+
+            // Bullet vs invaders (box test — the sprites are wide and flat).
+            for (auto& a : aliens_) {
+                if (!a.alive) continue;
+                float dx = b.x - alienX(a), dy = b.y - alienY(a);
+                if (fabsf(dx) < kAlienHW + 0.010f && fabsf(dy) < kAlienHH + 0.016f) {
+                    b.alive = false;
+                    killAlien(a);
+                    break;
                 }
-                state_ = WIN; stateTimer_ = 0.0f;
-                checkHighScore();
             }
-            continue;
-        }
-
-        // Bullet vs saucer
-        if (saucer_.alive &&
-            fabsf(b.x - saucer_.x) < 0.055f && fabsf(b.y - saucer_.y) < 0.035f) {
-            b.alive = false;
-            saucer_.alive = false;
-            long bonus = (long)kSaucerScore * level_;
-            score_ += bonus;
-            bonusFlash_ = bonus;
-            bonusFlashTimer_ = 0.9f;
-            bonusFlashX_ = saucer_.x; bonusFlashY_ = saucer_.y;
-            spawnDebris(saucer_.x, saucer_.y, 0.05f, 1.0f, 0.35f, 0.30f);
-            if (audio_) audio_->setSaucer(false);
-            if (audio_ && soundEnabled_) audio_->triggerExplosion();
-            continue;
-        }
-
-        // Bullet vs invaders (box test — the sprites are wide and flat).
-        for (auto& a : aliens_) {
-            if (!a.alive) continue;
-            float dx = b.x - alienX(a), dy = b.y - alienY(a);
-            if (fabsf(dx) < kAlienHW + 0.010f && fabsf(dy) < kAlienHH + 0.016f) {
-                b.alive = false;
-                killAlien(a);
-                break;
-            }
-        }
+        }  // substeps
     }
 }
 
