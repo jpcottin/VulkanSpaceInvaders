@@ -784,8 +784,12 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
              extent_.width, extent_.height,
              caps.currentExtent.width, caps.currentExtent.height);
         destroySwapchain();
-        if (!createSwapchain()) { swapchainReady_ = false; return; }
     }
+    // A recreate can fail transiently (zero-extent surface mid-fold, or an
+    // OUT_OF_DATE recreate below that didn't stick). Retry every frame until
+    // the surface is usable again rather than rendering with a null swapchain
+    // or freezing until the next INIT_WINDOW.
+    if (swapchain_ == VK_NULL_HANDLE && !createSwapchain()) return;
 
     vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
 
@@ -794,7 +798,7 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
                                        imageAvailable_[frame_], VK_NULL_HANDLE, &imageIndex);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
         destroySwapchain();
-        createSwapchain();
+        createSwapchain();  // failure is retried at the top of the next frame
         return;
     }
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
@@ -815,7 +819,15 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
     si.pCommandBuffers = &cmdBufs_[frame_];
     si.signalSemaphoreCount = 1;
     si.pSignalSemaphores = &renderFinished_[frame_];
-    vkQueueSubmit(queue_, 1, &si, inFlight_[frame_]);
+    VkResult sr = vkQueueSubmit(queue_, 1, &si, inFlight_[frame_]);
+    if (sr != VK_SUCCESS) {
+        // The fence was just reset and this failed submit will never signal
+        // it; waiting on it next frame would block the main thread forever
+        // (ANR). Halt rendering — the next INIT_WINDOW rebuilds everything.
+        LOGE("vkQueueSubmit failed %d, halting rendering", sr);
+        swapchainReady_ = false;
+        return;
+    }
 
     VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     pi.waitSemaphoreCount = 1;
@@ -826,7 +838,7 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
     r = vkQueuePresentKHR(queue_, &pi);
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) {
         destroySwapchain();
-        createSwapchain();
+        createSwapchain();  // failure is retried at the top of the next frame
     }
 
     frame_ = (frame_ + 1) % framesInFlight();

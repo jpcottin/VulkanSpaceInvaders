@@ -67,19 +67,23 @@ target_link_libraries(spaceinvaders
     log)
 
 # --- Unit tests (Google Test from NDK, runs as an Android executable) ---
-set(GTEST_ROOT "${ANDROID_NDK}/sources/third_party/googletest")
+# Debug only: the Game test hooks are compiled out under NDEBUG, so building
+# game_tests in a release variant (RelWithDebInfo) fails.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(GTEST_ROOT "${ANDROID_NDK}/sources/third_party/googletest")
 
-add_library(gtest STATIC
-    "${GTEST_ROOT}/src/gtest-all.cc"
-    "${GTEST_ROOT}/src/gtest_main.cc")
-target_include_directories(gtest PUBLIC  "${GTEST_ROOT}/include"
-                                 PRIVATE "${GTEST_ROOT}")
+    add_library(gtest STATIC
+        "${GTEST_ROOT}/src/gtest-all.cc"
+        "${GTEST_ROOT}/src/gtest_main.cc")
+    target_include_directories(gtest PUBLIC  "${GTEST_ROOT}/include"
+                                     PRIVATE "${GTEST_ROOT}")
 
-add_executable(game_tests
-    test/game_test.cpp
-    test/audio_stub.cpp
-    game.cpp)
-target_include_directories(game_tests PRIVATE
-    "${GTEST_ROOT}/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(game_tests gtest log)
+    add_executable(game_tests
+        test/game_test.cpp
+        test/audio_stub.cpp
+        game.cpp)
+    target_include_directories(game_tests PRIVATE
+        "${GTEST_ROOT}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(game_tests gtest log)
+endif()
