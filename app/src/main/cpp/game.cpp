@@ -93,6 +93,7 @@ void Game::setViewport(int w, int h) {
             s.x = frange(-1.0f, 1.0f);
             s.y = frange(-1.0f, 1.0f);
             s.size = frange(0.004f, 0.011f);
+            s.phase = frange(0.0f, 6.2832f);
             stars_.push_back(s);
         }
         for (int i = 0; i < 20; i++) {
@@ -100,6 +101,7 @@ void Game::setViewport(int w, int h) {
             s.x = frange(-1.0f, 1.0f);
             s.y = frange(-1.0f, 1.0f);
             s.size = frange(0.007f, 0.016f);
+            s.phase = frange(0.0f, 6.2832f);
             starsNear_.push_back(s);
         }
     }
@@ -1382,14 +1384,21 @@ void Game::drawSettingsScreen(std::vector<DrawCmd>& out) {
 }
 
 void Game::render(std::vector<DrawCmd>& out) {
+    // Stars are soft twinkling glow dots so they read as scenery, never as
+    // collidable objects — everything dangerous stays sharp-edged. The glow
+    // falloff eats the disc's edge, so sizes are scaled up to compensate.
     // far stars (dim, slow)
-    for (auto& s : stars_)
-        emit(out, SHAPE_QUAD, s.x * asp_, s.y, s.size, s.size, 0.0f,
-             0.55f, 0.60f, 0.78f, 0.70f);
-    // near stars (bright, fast parallax layer)
-    for (auto& s : starsNear_)
-        emit(out, SHAPE_QUAD, s.x * asp_, s.y, s.size, s.size, 0.0f,
-             0.85f, 0.88f, 1.00f, 0.90f);
+    for (auto& s : stars_) {
+        float tw = 0.35f + 0.15f * sinf(animTime_ * (0.8f + s.phase * 0.2f) + s.phase);
+        emit(out, SHAPE_DISC, s.x * asp_, s.y, s.size * 1.7f, s.size * 1.7f, 0.0f,
+             0.55f, 0.60f, 0.78f, tw, (float)STYLE_GLOW);
+    }
+    // near stars (brighter, fast parallax layer)
+    for (auto& s : starsNear_) {
+        float tw = 0.50f + 0.20f * sinf(animTime_ * (1.2f + s.phase * 0.3f) + s.phase);
+        emit(out, SHAPE_DISC, s.x * asp_, s.y, s.size * 1.7f, s.size * 1.7f, 0.0f,
+             0.85f, 0.88f, 1.00f, tw, (float)STYLE_GLOW);
+    }
 
     // Invader wave. On the title screen it doubles as the demo formation,
     // drawn dimmer under the title text.
