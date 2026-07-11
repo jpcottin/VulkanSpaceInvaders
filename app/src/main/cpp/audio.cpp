@@ -247,6 +247,12 @@ struct AudioEngine::Impl : public oboe::AudioStreamDataCallback,
                ->setFormat(oboe::AudioFormat::Float)
                ->setChannelCount(oboe::ChannelCount::Mono)
                ->setSampleRate(kSR)
+               // onAudioReady writes mono float at kSR unconditionally; let
+               // Oboe convert when the device stream differs, instead of the
+               // callback misinterpreting the buffer (garbage audio).
+               ->setFormatConversionAllowed(true)
+               ->setChannelConversionAllowed(true)
+               ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Medium)
                ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
                ->setSharingMode(oboe::SharingMode::Exclusive)
                ->setDataCallback(this)

@@ -154,11 +154,18 @@ TEST(March, ReversesAndDescendsAtLeftEdge) {
 TEST(March, StaysWithinSideMargins) {
     Game g;
     startPlaying(g);
-    step(g, 30.0f);
-    if (!g.isPlayingForTest()) return;      // wave may have invaded by then
-    for (int i = 0; i < g.alienTotalForTest(); i++) {
-        if (!g.alienAliveForTest(i)) continue;
-        EXPECT_LT(fabsf(g.alienXForTest(i)), aspect());
+    // Check continuously while the wave marches, not just at an endpoint (the
+    // wave may legitimately invade before 30 s are up, which used to make
+    // this test pass vacuously).
+    for (int i = 0; i < 300 && g.isPlayingForTest(); i++) {
+        step(g, 0.1f);
+        for (int a = 0; a < g.alienTotalForTest(); a++) {
+            if (!g.alienAliveForTest(a)) continue;
+            // Centers reverse at asp - margin - halfWidth = asp - 0.053;
+            // 0.05 leaves slack for a single frame of overshoot.
+            ASSERT_LT(fabsf(g.alienXForTest(a)), aspect() - 0.05f)
+                << "alien " << a << " out of margin after " << (i + 1) * 0.1f << " s";
+        }
     }
 }
 
@@ -218,6 +225,16 @@ TEST(ShipControl, ClampedToScreenEdge) {
     g.onPointerDown(0, (float)kW, ctrlPy());
     step(g, 2.0f);
     EXPECT_LE(g.shipX(), aspect());
+}
+
+// A mid-session viewport change (fold/unfold, projected display) must clamp
+// the ship back inside the new, narrower playfield.
+TEST(ShipControl, ViewportShrinkClampsTheShip) {
+    Game g;
+    startPlaying(g);                            // 1080x2400: asp = 0.45
+    g.setShipXForTest(aspect() - 0.05f);        // parked near the right edge
+    g.setViewport(720, 2400);                   // asp shrinks to 0.30
+    EXPECT_LT(g.shipX(), 0.30f);
 }
 
 // Dragging inside the strip is the primary steering gesture on the phone;
@@ -361,6 +378,23 @@ TEST(Kills, BottomRowOctopusIsWorthTen) {
     }
     ASSERT_EQ(g.alienCount(), aliveBefore - 1);
     EXPECT_EQ(g.score() - before, 10L * g.level());
+}
+
+TEST(Kills, MiddleRowCrabIsWorthTwenty) {
+    Game g;
+    startPlaying(g);
+    g.killAlienForTest(slot(2, 3));            // open the lane below the crab
+    float colX = g.alienXForTest(slot(1, 3));
+    g.setShipXForTest(colX);
+    g.onPointerDown(0, pxOf(colX), ctrlPy());
+    long before = g.score();
+    int  aliveBefore = g.alienCount();
+    for (int i = 0; i < 600 && g.alienCount() == aliveBefore; i++) {
+        g.setFormationXForTest(0.0f);
+        g.update(1.0f / 60.0f);
+    }
+    ASSERT_EQ(g.alienCount(), aliveBefore - 1);
+    EXPECT_EQ(g.score() - before, 20L * g.level());
 }
 
 TEST(Kills, TopRowSquidIsWorthThirty) {
@@ -706,7 +740,6 @@ TEST(Boss, SpawnsAtLevelTenWithFullHealth) {
     EXPECT_TRUE(g.bossActiveForTest());
     EXPECT_TRUE(g.bossAliveForTest());
     EXPECT_EQ(g.bossHpForTest(), 16);
-    EXPECT_FALSE(g.bossActiveForTest() && g.level() != 10);
     g.startLevelForTest(9);
     EXPECT_FALSE(g.bossActiveForTest());
 }
@@ -977,6 +1010,32 @@ TEST(Settings, PersistAcrossInstances) {
 }
 
 // ── High scores ──────────────────────────────────────────────────────────────
+
+// The table must insert by rank, displace lower entries, and cap at five —
+// previously only slot 0 was ever asserted.
+TEST(HighScores, TableOrdersDisplacesAndCaps) {
+    Game g;
+    startPlaying(g);   // dataPath unset: saves are no-ops, table is in-memory
+    const long runs[6] = {300, 100, 500, 200, 400, 250};
+    for (long r : runs) {
+        ASSERT_TRUE(g.isPlayingForTest());
+        g.setScoreForTest(r);
+        g.setFormationYForTest(0.72f);         // invasion => instant game over
+        g.update(1.0f / 60.0f);
+        ASSERT_TRUE(g.isGameOverForTest());
+        step(g, 0.7f);                         // GAME_OVER accepts taps after 0.6 s
+        tap(g, kW * 0.5f, kH * 0.5f);
+        g.update(1.0f / 60.0f);                // -> TITLE
+        ASSERT_TRUE(g.inTitleForTest());
+        tap(g, kW * 0.5f, kH * 0.5f);
+        g.update(1.0f / 60.0f);                // -> fresh PLAYING run
+    }
+    EXPECT_EQ(g.highScoreForTest(0), 500);
+    EXPECT_EQ(g.highScoreForTest(1), 400);
+    EXPECT_EQ(g.highScoreForTest(2), 300);
+    EXPECT_EQ(g.highScoreForTest(3), 250);
+    EXPECT_EQ(g.highScoreForTest(4), 200);     // the 100 was displaced off
+}
 
 TEST(HighScores, SavedOnGameOverAndReloaded) {
     const char* dir = getenv("TMPDIR");

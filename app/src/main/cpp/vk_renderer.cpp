@@ -598,6 +598,7 @@ bool VkRenderer::createSwapchain() {
 
     uint32_t fmtCount = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys_, surface_, &fmtCount, nullptr);
+    if (fmtCount == 0) { LOGE("No surface formats"); return false; }  // lost surface mid-recreate
     std::vector<VkSurfaceFormatKHR> formats(fmtCount);
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys_, surface_, &fmtCount, formats.data());
     VkSurfaceFormatKHR chosen = formats[0];
@@ -657,8 +658,24 @@ bool VkRenderer::createSwapchain() {
     for (uint32_t i = 0; i < n; i++)
         VK_CHECK(vkCreateSemaphore(device_, &semci, nullptr, &renderFinished_[i]));
 
+    // The render pass bakes in the attachment format, and the pipeline is
+    // built against the render pass: if a recreate chose a different format
+    // (e.g. the window moved to a display with another preferred format),
+    // both are stale and must be rebuilt.
+    if (renderPass_ != VK_NULL_HANDLE && renderPassFormat_ != format_) {
+        LOGI("Surface format changed %d -> %d, rebuilding render pass + pipeline",
+             (int)renderPassFormat_, (int)format_);
+        vkDeviceWaitIdle(device_);
+        if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
+        vkDestroyRenderPass(device_, renderPass_, nullptr);
+        renderPass_ = VK_NULL_HANDLE;
+    }
     if (renderPass_ == VK_NULL_HANDLE) {
         if (!createRenderPass()) return false;
+        renderPassFormat_ = format_;
+    }
+    if (pipeline_ == VK_NULL_HANDLE && pipelineLayout_ != VK_NULL_HANDLE) {
+        if (!createPipeline()) return false;
     }
 
     views_.resize(n);

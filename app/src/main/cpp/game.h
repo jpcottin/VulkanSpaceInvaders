@@ -184,8 +184,15 @@ private:
 public:
     void setAudioEngine(AudioEngine* a) { audio_ = a; }
     void setDataPath(const char* path);
+    // Randomize the xorshift state (production only — tests rely on the fixed
+    // default seed for deterministic choreography). Zero would lock xorshift
+    // at zero forever, so it is mapped away.
+    void seedRng(uint32_t seed) { rng_ = seed ? seed : 0x1234567u; }
     // Re-read highscores/settings from disk (phone <-> glasses handoff).
     void reloadFromDisk();
+    // Process-death save/restore (see SavedGame in main.cpp).
+    bool isMidGame() const { return state_ == PLAYING || state_ == LEVEL_CLEAR; }
+    void restoreSession(int level, long score, int lives);
     void setHapticCallback(std::function<void()> fn) { haptic_ = std::move(fn); }
 
     // --- test / debug accessors ---
@@ -248,6 +255,7 @@ public:
         saucer_.x = x; saucer_.y = -0.80f; saucer_.vx = vx; saucer_.alive = true;
     }
     long  highScoreForTest(int i) const { return highScores_[i].score; }
+    void  setScoreForTest(long s)       { score_ = s; }
     bool  inTitleForTest()        const { return state_ == TITLE; }
     bool  inSettingsForTest()     const { return state_ == SETTINGS; }
     bool  isPlayingForTest()      const { return state_ == PLAYING; }

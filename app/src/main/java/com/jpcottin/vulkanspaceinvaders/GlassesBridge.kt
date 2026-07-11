@@ -12,6 +12,8 @@ import androidx.xr.projected.experimental.ExperimentalProjectedApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -37,17 +39,23 @@ object GlassesBridge {
         val s = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         scope = s
         s.launch {
-            try {
-                ProjectedContext.isProjectedDeviceConnected(
-                    context.applicationContext,
-                    s.coroutineContext
-                ).collect { value ->
-                    connected = value
-                    Log.i(TAG, "Glasses connected: $value")
+            // A transient failure of the projected-device flow must not end
+            // monitoring for the process lifetime — retry with a backoff so
+            // the glasses can reappear after a hiccup.
+            while (isActive) {
+                try {
+                    ProjectedContext.isProjectedDeviceConnected(
+                        context.applicationContext,
+                        s.coroutineContext
+                    ).collect { value ->
+                        connected = value
+                        Log.i(TAG, "Glasses connected: $value")
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Glasses monitoring failed, retrying in 10 s", t)
+                    connected = false
                 }
-            } catch (t: Throwable) {
-                Log.w(TAG, "Glasses monitoring unavailable", t)
-                connected = false
+                delay(10_000)
             }
         }
     }

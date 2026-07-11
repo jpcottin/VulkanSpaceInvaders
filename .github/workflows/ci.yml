@@ -25,6 +25,7 @@ jobs:
 
       - name: Install NDK 29
         run: |
+          set -o pipefail  # a failed sdkmanager must fail the step, not tail
           echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
             "ndk;29.0.14206865" 2>&1 | tail -3
 
@@ -62,6 +63,7 @@ jobs:
 
       - name: Install NDK 29
         run: |
+          set -o pipefail  # a failed sdkmanager must fail the step, not tail
           echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
             "ndk;29.0.14206865" 2>&1 | tail -3
 
@@ -141,6 +143,7 @@ jobs:
 
       - name: Install NDK 29
         run: |
+          set -o pipefail  # a failed sdkmanager must fail the step, not tail
           echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
             "ndk;29.0.14206865" 2>&1 | tail -3
 
@@ -168,13 +171,10 @@ jobs:
           script: |
             adb wait-for-device
             ./gradlew connectedAndroidTest --no-daemon
-            adb install -r app/build/outputs/apk/debug/app-debug.apk
-            adb shell input keyevent KEYCODE_WAKEUP
-            adb shell wm dismiss-keyguard
-            adb shell am start -n com.jpcottin.vulkanspaceinvaders/android.app.NativeActivity
-            for i in $(seq 1 15); do adb shell dumpsys window windows | grep -q "com.jpcottin.vulkanspaceinvaders" && break; sleep 1; done || true
-            sleep 4
-            adb exec-out screencap -p > screenshot.png || true
+            # The screenshot was captured INSIDE the passing test (verified
+            # RESUMED + live swapchain) to /data/local/tmp, which survives the
+            # post-test uninstall — no unverified relaunch needed.
+            adb pull /data/local/tmp/smoke.png screenshot.png || true
             adb logcat -d SpaceInvaders:V AndroidRuntime:E *:S > logcat.txt || true
 
       - name: Upload test results
