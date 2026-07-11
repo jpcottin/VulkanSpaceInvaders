@@ -800,6 +800,14 @@ void Game::updateBombs(float dt) {
     }
 }
 
+// Grant a power-up's effect. Shared by the pickup path and the test hook so
+// tests exercise the production timers, not a copy of them.
+void Game::applyPowerUp(PowerUpType t) {
+    if (t == PU_SHIELD)      shieldActive_ = true;
+    else if (t == PU_RAPID)  { rapidActive_  = true; rapidTimer_  = kRapidDuration; }
+    else                     { tripleActive_ = true; tripleTimer_ = kRapidDuration; }
+}
+
 // Kill an alien: score by row tier, debris, possible power-up drop.
 void Game::killAlien(Alien& a) {
     a.alive = false;
@@ -978,9 +986,7 @@ void Game::updatePowerUps(float dt) {
             bonusFlash_ = bonus;
             bonusFlashTimer_ = 0.9f;
             bonusFlashX_ = pu.x; bonusFlashY_ = pu.y - 0.06f;
-            if (pu.type == PU_SHIELD)      shieldActive_ = true;
-            else if (pu.type == PU_RAPID)  { rapidActive_  = true; rapidTimer_  = kRapidDuration; }
-            else                           { tripleActive_ = true; tripleTimer_ = kRapidDuration; }
+            applyPowerUp(pu.type);
             if (audio_ && soundEnabled_) audio_->triggerPowerUp();
         }
     }

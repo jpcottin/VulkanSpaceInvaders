@@ -220,6 +220,34 @@ TEST(ShipControl, ClampedToScreenEdge) {
     EXPECT_LE(g.shipX(), aspect());
 }
 
+// Dragging inside the strip is the primary steering gesture on the phone;
+// the ship must follow the moved finger, not the original touch-down point.
+TEST(ShipControl, DragSteersTheShip) {
+    Game g;
+    startPlaying(g);
+    g.onPointerDown(0, pxOf(0.0f), ctrlPy());
+    step(g, 0.5f);
+    ASSERT_NEAR(g.shipX(), 0.0f, 0.02f);
+    g.onPointerMove(0, pxOf(0.30f), ctrlPy());
+    step(g, 1.5f);
+    EXPECT_NEAR(g.shipX(), 0.30f, 0.02f);
+}
+
+// A system cancel (e.g. gesture-nav interception) must release all pointers:
+// no phantom finger may keep steering or firing.
+TEST(ShipControl, CancelReleasesAllPointers) {
+    Game g;
+    startPlaying(g);
+    g.onPointerDown(0, pxOf(0.30f), ctrlPy());
+    step(g, 0.2f);                 // ship starts walking toward the finger
+    g.onPointersCancel();
+    float x = g.shipX();
+    int bulletsAtCancel = g.bulletCount();
+    step(g, 1.0f);
+    EXPECT_FLOAT_EQ(g.shipX(), x);
+    EXPECT_LE(g.bulletCount(), bulletsAtCancel);  // no new shots after cancel
+}
+
 TEST(ShipControl, NoTouchNoMovement) {
     Game g;
     startPlaying(g);
@@ -1041,10 +1069,45 @@ TEST(AutoPlay, ClearsAWaveEventually) {
     for (int i = 0; i < g.alienTotalForTest() - 2; i++) g.killAlienForTest(i);
     for (int i = 0; i < 3600 && g.isPlayingForTest(); i++)
         g.update(1.0f / 60.0f);
-    // Either the wave was cleared (level advanced / LEVEL_CLEAR) or — rarely —
-    // the AI died trying; it must never still be stuck mid-wave.
-    if (g.isPlayingForTest())
-        EXPECT_TRUE(g.level() > 1 || g.alienCount() == 24);
-    else
-        EXPECT_TRUE(g.isLevelClearForTest() || g.isGameOverForTest());
+    // The autopilot must actually clear the wave — advancing past it is the
+    // only acceptable outcome. Accepting "died trying" here would let an
+    // autopilot regression that gets the ship killed instantly still pass.
+    EXPECT_TRUE(g.isLevelClearForTest() || g.level() > 1)
+        << "after 60 s: playing=" << g.isPlayingForTest()
+        << " gameOver=" << g.isGameOverForTest()
+        << " aliens=" << g.alienCount();
+}
+
+// ── Render coverage ───────────────────────────────────────────────────────────
+
+// render() is ~600 lines of state-dependent drawing that the unit suite never
+// exercised: any crash there was invisible until a device run. Drive it
+// through every state reachable from the test hooks and require output.
+TEST(Render, ProducesOutputInEveryReachableState) {
+    Game g;
+    g.setViewport(kW, kH);
+    std::vector<DrawCmd> cmds;
+
+    g.render(cmds);                                    // TITLE (+ demo wave)
+    EXPECT_GT(cmds.size(), 0u) << "TITLE drew nothing";
+
+    startPlaying(g);
+    step(g, 0.2f);
+    cmds.clear(); g.render(cmds);                      // PLAYING (HUD, wave)
+    EXPECT_GT(cmds.size(), 0u) << "PLAYING drew nothing";
+
+    g.startLevelForTest(10);                           // boss fight (health bar)
+    step(g, 0.5f);
+    cmds.clear(); g.render(cmds);
+    EXPECT_GT(cmds.size(), 0u) << "BOSS level drew nothing";
+
+    for (int hit = 0; hit < 3; hit++) {                // GAME_OVER (score text)
+        g.clearInvulnForTest();
+        g.spawnTestBomb(g.shipX(), 0.50f, 0.6f);
+        step(g, 0.6f);
+    }
+    ASSERT_TRUE(g.isGameOverForTest());
+    step(g, 0.5f);
+    cmds.clear(); g.render(cmds);
+    EXPECT_GT(cmds.size(), 0u) << "GAME_OVER drew nothing";
 }
