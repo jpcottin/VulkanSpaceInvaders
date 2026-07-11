@@ -93,7 +93,7 @@ private:
         float cr, cg, cb;
         bool alive;
     };
-    struct Star { float x, y, size; };
+    struct Star { float x, y, size, phase; };
     struct Pointer { bool active; float x, y; };
     struct HighScore { long score = 0; int level = 0; };
 
