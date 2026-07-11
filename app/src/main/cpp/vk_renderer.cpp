@@ -211,14 +211,25 @@ bool VkRenderer::ensureDevice() {
     VK_CHECK(vkCreateDevice(phys_, &dci, nullptr, &device_));
     vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
 
-    if (!createVertexBuffer()) return false;
-    if (!createInstanceBuffers()) return false;
-    if (!createSyncAndCommands()) return false;
+    // On any failure past this point, tear the partial device down so a
+    // retry (next INIT_WINDOW) starts clean instead of leaking the old
+    // device and its buffers by overwriting the handles.
+    if (!createVertexBuffer() ||
+        !createInstanceBuffers() ||
+        !createSyncAndCommands()) {
+        teardownDevice();
+        return false;
+    }
 
     // Pipeline layout: all per-draw data travels as instance attributes, so
     // no descriptors and no push constants.
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    VK_CHECK(vkCreatePipelineLayout(device_, &plci, nullptr, &pipelineLayout_));
+    VkResult pr = vkCreatePipelineLayout(device_, &plci, nullptr, &pipelineLayout_);
+    if (pr != VK_SUCCESS) {
+        LOGE("vkCreatePipelineLayout failed %d", pr);
+        teardownDevice();
+        return false;
+    }
 
     deviceReady_ = true;
     return true;
@@ -433,9 +444,9 @@ bool VkRenderer::createSyncAndCommands() {
     fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
     for (int i = 0; i < kFramesInFlight; i++) {
         VK_CHECK(vkCreateSemaphore(device_, &sci, nullptr, &imageAvailable_[i]));
-        VK_CHECK(vkCreateSemaphore(device_, &sci, nullptr, &renderFinished_[i]));
         VK_CHECK(vkCreateFence(device_, &fci, nullptr, &inFlight_[i]));
     }
+    // renderFinished_ semaphores live with the swapchain (one per image).
     return true;
 }
 
@@ -640,6 +651,12 @@ bool VkRenderer::createSwapchain() {
     images_.resize(n);
     vkGetSwapchainImagesKHR(device_, swapchain_, &n, images_.data());
 
+    // One present-wait semaphore per swapchain image (see vk_renderer.h).
+    renderFinished_.resize(n, VK_NULL_HANDLE);
+    VkSemaphoreCreateInfo semci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    for (uint32_t i = 0; i < n; i++)
+        VK_CHECK(vkCreateSemaphore(device_, &semci, nullptr, &renderFinished_[i]));
+
     if (renderPass_ == VK_NULL_HANDLE) {
         if (!createRenderPass()) return false;
     }
@@ -672,9 +689,11 @@ void VkRenderer::destroySwapchain() {
     if (device_) vkDeviceWaitIdle(device_);
     for (auto fb : framebuffers_) if (fb) vkDestroyFramebuffer(device_, fb, nullptr);
     for (auto v : views_) if (v) vkDestroyImageView(device_, v, nullptr);
+    for (auto s : renderFinished_) if (s) vkDestroySemaphore(device_, s, nullptr);
     framebuffers_.clear();
     views_.clear();
     images_.clear();
+    renderFinished_.clear();
     if (swapchain_) { vkDestroySwapchainKHR(device_, swapchain_, nullptr); swapchain_ = VK_NULL_HANDLE; }
 }
 
@@ -700,6 +719,20 @@ void VkRenderer::termWindow() {
     destroySwapchain();
     if (surface_) { vkDestroySurfaceKHR(instance_, surface_, nullptr); surface_ = VK_NULL_HANDLE; }
     window_ = nullptr;
+}
+
+// Android can invalidate the surface without destroying the window (e.g. a
+// projected-display disconnect). Rebuild the surface from the live window;
+// the swapchain self-heal at the top of drawFrame rebuilds the rest.
+bool VkRenderer::recreateSurface() {
+    if (!window_) return false;
+    LOGW("Surface lost, recreating");
+    destroySwapchain();
+    if (surface_) { vkDestroySurfaceKHR(instance_, surface_, nullptr); surface_ = VK_NULL_HANDLE; }
+    VkAndroidSurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
+    sci.window = window_;
+    VK_CHECK(vkCreateAndroidSurfaceKHR(instance_, &sci, nullptr, &surface_));
+    return true;
 }
 
 void VkRenderer::recordCommandBuffer(VkCommandBuffer cb, uint32_t imageIndex,
@@ -775,15 +808,23 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
     // would happily stretch the stale-size swapchain onto the new panel.
     // Rebuild the swapchain whenever the surface extent no longer matches.
     VkSurfaceCapabilitiesKHR caps;
-    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_, surface_, &caps) == VK_SUCCESS &&
-        caps.currentExtent.width != 0xFFFFFFFF &&
-        caps.currentExtent.width != 0 && caps.currentExtent.height != 0 &&
-        (caps.currentExtent.width != extent_.width ||
-         caps.currentExtent.height != extent_.height)) {
-        LOGI("Surface resized %ux%u -> %ux%u, recreating swapchain",
-             extent_.width, extent_.height,
-             caps.currentExtent.width, caps.currentExtent.height);
-        destroySwapchain();
+    // The caps query is a synchronous host round trip (expensive on the
+    // emulator's guest->host Vulkan), so poll at ~5 Hz instead of per frame;
+    // a stale extent also surfaces as OUT_OF_DATE on acquire/present below.
+    if (frameCount_++ % 12 == 0) {
+        VkResult cr = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_, surface_, &caps);
+        if (cr == VK_ERROR_SURFACE_LOST_KHR) {
+            if (!recreateSurface()) return;
+        } else if (cr == VK_SUCCESS &&
+            caps.currentExtent.width != 0xFFFFFFFF &&
+            caps.currentExtent.width != 0 && caps.currentExtent.height != 0 &&
+            (caps.currentExtent.width != extent_.width ||
+             caps.currentExtent.height != extent_.height)) {
+            LOGI("Surface resized %ux%u -> %ux%u, recreating swapchain",
+                 extent_.width, extent_.height,
+                 caps.currentExtent.width, caps.currentExtent.height);
+            destroySwapchain();
+        }
     }
     // A recreate can fail transiently (zero-extent surface mid-fold, or an
     // OUT_OF_DATE recreate below that didn't stick). Retry every frame until
@@ -799,6 +840,10 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
         destroySwapchain();
         createSwapchain();  // failure is retried at the top of the next frame
+        return;
+    }
+    if (r == VK_ERROR_SURFACE_LOST_KHR) {
+        recreateSurface();  // swapchain rebuilt by the self-heal next frame
         return;
     }
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
@@ -818,7 +863,7 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cmdBufs_[frame_];
     si.signalSemaphoreCount = 1;
-    si.pSignalSemaphores = &renderFinished_[frame_];
+    si.pSignalSemaphores = &renderFinished_[imageIndex];
     VkResult sr = vkQueueSubmit(queue_, 1, &si, inFlight_[frame_]);
     if (sr != VK_SUCCESS) {
         // The fence was just reset and this failed submit will never signal
@@ -831,7 +876,7 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
 
     VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     pi.waitSemaphoreCount = 1;
-    pi.pWaitSemaphores = &renderFinished_[frame_];
+    pi.pWaitSemaphores = &renderFinished_[imageIndex];
     pi.swapchainCount = 1;
     pi.pSwapchains = &swapchain_;
     pi.pImageIndices = &imageIndex;
@@ -839,33 +884,51 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) {
         destroySwapchain();
         createSwapchain();  // failure is retried at the top of the next frame
+    } else if (r == VK_ERROR_SURFACE_LOST_KHR) {
+        recreateSurface();
     }
 
     frame_ = (frame_ + 1) % framesInFlight();
 }
 
-void VkRenderer::cleanup() {
+// Destroy everything ensureDevice creates, in reverse order. Called on the
+// normal teardown path and when ensureDevice fails partway through, so a
+// retry starts from clean handles instead of overwriting (and leaking) them.
+void VkRenderer::teardownDevice() {
     if (!device_) return;
     vkDeviceWaitIdle(device_);
-    destroySwapchain();
-    if (renderPass_) vkDestroyRenderPass(device_, renderPass_, nullptr);
-    if (pipeline_) vkDestroyPipeline(device_, pipeline_, nullptr);
-    if (pipelineLayout_) vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
-    if (vbo_) vkDestroyBuffer(device_, vbo_, nullptr);
-    if (vboMem_) vkFreeMemory(device_, vboMem_, nullptr);
+    if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
     for (int i = 0; i < kFramesInFlight; i++) {
-        if (instBuf_[i]) vkDestroyBuffer(device_, instBuf_[i], nullptr);
-        if (instMem_[i]) { vkUnmapMemory(device_, instMem_[i]); vkFreeMemory(device_, instMem_[i], nullptr); }
+        if (imageAvailable_[i]) { vkDestroySemaphore(device_, imageAvailable_[i], nullptr); imageAvailable_[i] = VK_NULL_HANDLE; }
+        if (inFlight_[i]) { vkDestroyFence(device_, inFlight_[i], nullptr); inFlight_[i] = VK_NULL_HANDLE; }
     }
+    if (cmdPool_) { vkDestroyCommandPool(device_, cmdPool_, nullptr); cmdPool_ = VK_NULL_HANDLE; }
     for (int i = 0; i < kFramesInFlight; i++) {
-        if (imageAvailable_[i]) vkDestroySemaphore(device_, imageAvailable_[i], nullptr);
-        if (renderFinished_[i]) vkDestroySemaphore(device_, renderFinished_[i], nullptr);
-        if (inFlight_[i]) vkDestroyFence(device_, inFlight_[i], nullptr);
+        if (instBuf_[i]) { vkDestroyBuffer(device_, instBuf_[i], nullptr); instBuf_[i] = VK_NULL_HANDLE; }
+        if (instMem_[i]) {
+            vkUnmapMemory(device_, instMem_[i]);
+            vkFreeMemory(device_, instMem_[i], nullptr);
+            instMem_[i] = VK_NULL_HANDLE; instMapped_[i] = nullptr;
+        }
     }
-    if (cmdPool_) vkDestroyCommandPool(device_, cmdPool_, nullptr);
-    if (surface_) vkDestroySurfaceKHR(instance_, surface_, nullptr);
+    if (vbo_) { vkDestroyBuffer(device_, vbo_, nullptr); vbo_ = VK_NULL_HANDLE; }
+    if (vboMem_) { vkFreeMemory(device_, vboMem_, nullptr); vboMem_ = VK_NULL_HANDLE; }
     vkDestroyDevice(device_, nullptr);
-    if (instance_) vkDestroyInstance(instance_, nullptr);
     device_ = VK_NULL_HANDLE;
-    instance_ = VK_NULL_HANDLE;
+    queue_ = VK_NULL_HANDLE;
+    deviceReady_ = false;
+}
+
+void VkRenderer::cleanup() {
+    if (device_) {
+        vkDeviceWaitIdle(device_);
+        destroySwapchain();
+        if (renderPass_) { vkDestroyRenderPass(device_, renderPass_, nullptr); renderPass_ = VK_NULL_HANDLE; }
+        if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
+        teardownDevice();
+    }
+    // Surface and instance exist independently of the device (a window may
+    // never have arrived): destroy them even when the device was never made.
+    if (surface_) { vkDestroySurfaceKHR(instance_, surface_, nullptr); surface_ = VK_NULL_HANDLE; }
+    if (instance_) { vkDestroyInstance(instance_, nullptr); instance_ = VK_NULL_HANDLE; }
 }

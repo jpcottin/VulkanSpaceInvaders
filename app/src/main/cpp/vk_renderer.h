@@ -36,8 +36,10 @@ public:
 
 private:
     bool ensureDevice();
+    void teardownDevice();
     bool createSwapchain();
     void destroySwapchain();
+    bool recreateSurface();
     bool createRenderPass();
     bool createPipeline();
     bool createVertexBuffer();
@@ -81,9 +83,14 @@ private:
     void* instMapped_[kFramesInFlight] = {nullptr};
     VkCommandBuffer cmdBufs_[kFramesInFlight] = {VK_NULL_HANDLE};
     VkSemaphore imageAvailable_[kFramesInFlight] = {VK_NULL_HANDLE};
-    VkSemaphore renderFinished_[kFramesInFlight] = {VK_NULL_HANDLE};
+    // Present-wait semaphores are per swapchain image, not per frame in
+    // flight: the in-flight fence covers command-buffer execution but not the
+    // presentation engine's wait, so re-signaling a per-frame semaphore can
+    // race the present of an earlier frame that used the same one.
+    std::vector<VkSemaphore> renderFinished_;
     VkFence inFlight_[kFramesInFlight] = {VK_NULL_HANDLE};
     uint32_t frame_ = 0;
+    uint32_t frameCount_ = 0;
 
     bool deviceReady_ = false;
     bool swapchainReady_ = false;
