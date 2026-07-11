@@ -203,11 +203,40 @@ void Game::loadHighScores() {
     fclose(f);
 }
 
+// Insert a score at its rank unless the identical entry is already present.
+// Exact-duplicate skipping matters because the phone and glasses instances
+// load the same file: without it every merge would double the shared rows.
+void Game::mergeHighScore(long score, int level) {
+    if (score <= 0) return;
+    for (int i = 0; i < kMaxScores; i++)
+        if (highScores_[i].score == score && highScores_[i].level == level) return;
+    int pos = kMaxScores;
+    for (int i = 0; i < kMaxScores; i++)
+        if (score > highScores_[i].score) { pos = i; break; }
+    if (pos == kMaxScores) return;
+    for (int i = kMaxScores - 1; i > pos; i--) highScores_[i] = highScores_[i - 1];
+    highScores_[pos] = {score, level};
+}
+
 void Game::saveHighScores() {
     if (dataPath_[0] == '\0') return;
+    // The other instance (phone vs glasses, same process, separate Game
+    // objects) may have saved since we loaded: merge the disk table into
+    // ours first so a stale in-memory copy never clobbers a saved score.
+    FILE* rf = fopen(dataPath_, "rb");
+    if (rf) {
+        struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } in;
+        if (fread(&in, sizeof(in), 1, rf) == 1 && in.magic == kHsMagic) {
+            int n = (int)in.count < kMaxScores ? (int)in.count : kMaxScores;
+            for (int i = 0; i < n; i++)
+                mergeHighScore((long)in.e[i].score, in.e[i].level);
+        }
+        fclose(rf);
+    }
+
     FILE* f = fopen(dataPath_, "wb");
     if (!f) return;
-    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf;
+    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf{};
     buf.magic = kHsMagic;
     buf.count = kMaxScores;
     for (int i = 0; i < kMaxScores; i++) {
@@ -216,6 +245,13 @@ void Game::saveHighScores() {
     }
     fwrite(&buf, sizeof(buf), 1, f);
     fclose(f);
+}
+
+// Re-read persisted state. The phone and glasses instances share the files;
+// whichever regains focus adopts what the other saved while it was away.
+void Game::reloadFromDisk() {
+    loadHighScores();
+    loadSettings();
 }
 
 static const uint32_t kSettingsMagic = 0x53455454u;  // "SETT"
@@ -421,10 +457,13 @@ void Game::update(float dt) {
     animTime_ += dt;
 
     // Particles and explosions animate in all states.
+    // Drag is exponential decay, normalized to a 60 Hz reference so debris
+    // behaves the same at any refresh rate.
+    float drag = powf(0.88f, dt * 60.0f);
     for (auto& p : particles_) {
         if (!p.alive) continue;
         p.x  += p.vx * dt; p.y  += p.vy * dt;
-        p.vx *= 0.88f;     p.vy *= 0.88f; // drag
+        p.vx *= drag;      p.vy *= drag;
         p.rot += p.spin * dt;
         p.t   += dt;
         if (p.t >= p.maxLife) p.alive = false;
@@ -450,11 +489,11 @@ void Game::update(float dt) {
         if (s.y > 1.05f) { s.y = -1.05f; s.x = frange(-1.0f, 1.0f); }
     }
 
-    // Screen shake decay.
+    // Screen shake decay, 60 Hz-normalized like the particle drag above.
     if (shakeAmt_ > 0.0f) {
         shakeX_ = frange(-1.0f, 1.0f) * shakeAmt_ * 0.040f;
         shakeY_ = frange(-1.0f, 1.0f) * shakeAmt_ * 0.040f;
-        shakeAmt_ *= 0.78f;
+        shakeAmt_ *= powf(0.78f, dt * 60.0f);
         if (shakeAmt_ < 0.01f) { shakeAmt_ = 0.0f; shakeX_ = 0.0f; shakeY_ = 0.0f; }
     }
 
@@ -574,6 +613,9 @@ void Game::applyShipHit() {
     if (shieldActive_) {
         shieldActive_ = false;
         shakeAmt_ = 0.5f;
+        // Brief grace so two overlapping hits in one frame (adjacent aliens,
+        // alien + bomb) can't consume the shield and a life together.
+        invuln_ = 1.0f;
         return;
     }
     lives_--;
@@ -758,6 +800,14 @@ void Game::updateBombs(float dt) {
     }
 }
 
+// Grant a power-up's effect. Shared by the pickup path and the test hook so
+// tests exercise the production timers, not a copy of them.
+void Game::applyPowerUp(PowerUpType t) {
+    if (t == PU_SHIELD)      shieldActive_ = true;
+    else if (t == PU_RAPID)  { rapidActive_  = true; rapidTimer_  = kRapidDuration; }
+    else                     { tripleActive_ = true; tripleTimer_ = kRapidDuration; }
+}
+
 // Kill an alien: score by row tier, debris, possible power-up drop.
 void Game::killAlien(Alien& a) {
     a.alive = false;
@@ -799,88 +849,97 @@ void Game::updateBullets(float dt) {
 
     for (auto& b : bullets_) {
         if (!b.alive) continue;
-        b.x += b.vx * dt;
-        b.y += b.vy * dt;
-        if (b.y < -1.05f || b.x > asp_ + 0.1f || b.x < -asp_ - 0.1f) {
-            b.alive = false; continue;
-        }
-
-        // Bullet vs bomb: shooting down an incoming bomb cancels both.
-        for (auto& bomb : bombs_) {
-            if (!bomb.alive) continue;
-            float dx = b.x - bomb.x, dy = b.y - bomb.y;
-            if (dx*dx + dy*dy < 0.030f * 0.030f) {
-                b.alive = false;
-                bomb.alive = false;
-                Explosion e;
-                e.x = bomb.x; e.y = bomb.y; e.radius = 0.020f;
-                e.t = 0.0f; e.maxLife = 0.12f;
-                e.cr = 1.0f; e.cg = 0.6f; e.cb = 0.2f; e.alive = true;
-                explosions_.push_back(e);
-                break;
+        // Substep the move so a fast bullet can't tunnel: a full 2.4-speed
+        // step is 0.04 at 60 fps — already most of a bomb's 0.06 collision
+        // diameter — and 0.12 at the clamped dt, taller than an alien's whole
+        // hit box. Collisions are checked at every substep position.
+        const float kMaxStep = 0.02f;
+        int steps = (int)((fabsf(b.vx) + fabsf(b.vy)) * dt / kMaxStep) + 1;
+        float sdt = dt / (float)steps;
+        for (int s = 0; s < steps && b.alive; s++) {
+            b.x += b.vx * sdt;
+            b.y += b.vy * sdt;
+            if (b.y < -1.05f || b.x > asp_ + 0.1f || b.x < -asp_ - 0.1f) {
+                b.alive = false; continue;
             }
-        }
-        if (!b.alive) continue;
 
-        // Bullet vs boss mothership
-        if (bossActive_ && boss_.alive &&
-            fabsf(b.x - boss_.x) < kBossHW + 0.010f &&
-            fabsf(b.y - kBossY) < kBossHH + 0.016f) {
-            b.alive = false;
-            boss_.hp--;
-            Explosion hitFlash;
-            hitFlash.x = b.x; hitFlash.y = kBossY + kBossHH;
-            hitFlash.radius = 0.035f;
-            hitFlash.t = 0.0f; hitFlash.maxLife = 0.12f;
-            hitFlash.cr = 1.0f; hitFlash.cg = 0.6f; hitFlash.cb = 0.1f;
-            hitFlash.alive = true;
-            explosions_.push_back(hitFlash);
-            if (boss_.hp <= 0) {
-                boss_.alive = false;
-                long bonus = (long)kBossScore * level_;
+            // Bullet vs bomb: shooting down an incoming bomb cancels both.
+            for (auto& bomb : bombs_) {
+                if (!bomb.alive) continue;
+                float dx = b.x - bomb.x, dy = b.y - bomb.y;
+                if (dx*dx + dy*dy < 0.030f * 0.030f) {
+                    b.alive = false;
+                    bomb.alive = false;
+                    Explosion e;
+                    e.x = bomb.x; e.y = bomb.y; e.radius = 0.020f;
+                    e.t = 0.0f; e.maxLife = 0.12f;
+                    e.cr = 1.0f; e.cg = 0.6f; e.cb = 0.2f; e.alive = true;
+                    explosions_.push_back(e);
+                    break;
+                }
+            }
+            if (!b.alive) continue;
+
+            // Bullet vs boss mothership
+            if (bossActive_ && boss_.alive &&
+                fabsf(b.x - boss_.x) < kBossHW + 0.010f &&
+                fabsf(b.y - kBossY) < kBossHH + 0.016f) {
+                b.alive = false;
+                boss_.hp--;
+                Explosion hitFlash;
+                hitFlash.x = b.x; hitFlash.y = kBossY + kBossHH;
+                hitFlash.radius = 0.035f;
+                hitFlash.t = 0.0f; hitFlash.maxLife = 0.12f;
+                hitFlash.cr = 1.0f; hitFlash.cg = 0.6f; hitFlash.cb = 0.1f;
+                hitFlash.alive = true;
+                explosions_.push_back(hitFlash);
+                if (boss_.hp <= 0) {
+                    boss_.alive = false;
+                    long bonus = (long)kBossScore * level_;
+                    score_ += bonus;
+                    bonusFlash_ = bonus;
+                    bonusFlashTimer_ = 0.9f;
+                    bonusFlashX_ = boss_.x; bonusFlashY_ = kBossY;
+                    spawnDebris(boss_.x, kBossY, kBossHW,        1.00f, 0.35f, 0.55f);
+                    spawnDebris(boss_.x, kBossY, kBossHW * 0.6f, 0.85f, 0.25f, 0.75f);
+                    if (audio_) audio_->setSaucer(false);
+                    if (audio_ && soundEnabled_) {
+                        audio_->triggerExplosion();
+                        audio_->triggerLevelClear();
+                    }
+                    state_ = WIN; stateTimer_ = 0.0f;
+                    checkHighScore();
+                }
+                continue;
+            }
+
+            // Bullet vs saucer
+            if (saucer_.alive &&
+                fabsf(b.x - saucer_.x) < 0.055f && fabsf(b.y - saucer_.y) < 0.035f) {
+                b.alive = false;
+                saucer_.alive = false;
+                long bonus = (long)kSaucerScore * level_;
                 score_ += bonus;
                 bonusFlash_ = bonus;
                 bonusFlashTimer_ = 0.9f;
-                bonusFlashX_ = boss_.x; bonusFlashY_ = kBossY;
-                spawnDebris(boss_.x, kBossY, kBossHW,        1.00f, 0.35f, 0.55f);
-                spawnDebris(boss_.x, kBossY, kBossHW * 0.6f, 0.85f, 0.25f, 0.75f);
+                bonusFlashX_ = saucer_.x; bonusFlashY_ = saucer_.y;
+                spawnDebris(saucer_.x, saucer_.y, 0.05f, 1.0f, 0.35f, 0.30f);
                 if (audio_) audio_->setSaucer(false);
-                if (audio_ && soundEnabled_) {
-                    audio_->triggerExplosion();
-                    audio_->triggerLevelClear();
+                if (audio_ && soundEnabled_) audio_->triggerExplosion();
+                continue;
+            }
+
+            // Bullet vs invaders (box test — the sprites are wide and flat).
+            for (auto& a : aliens_) {
+                if (!a.alive) continue;
+                float dx = b.x - alienX(a), dy = b.y - alienY(a);
+                if (fabsf(dx) < kAlienHW + 0.010f && fabsf(dy) < kAlienHH + 0.016f) {
+                    b.alive = false;
+                    killAlien(a);
+                    break;
                 }
-                state_ = WIN; stateTimer_ = 0.0f;
-                checkHighScore();
             }
-            continue;
-        }
-
-        // Bullet vs saucer
-        if (saucer_.alive &&
-            fabsf(b.x - saucer_.x) < 0.055f && fabsf(b.y - saucer_.y) < 0.035f) {
-            b.alive = false;
-            saucer_.alive = false;
-            long bonus = (long)kSaucerScore * level_;
-            score_ += bonus;
-            bonusFlash_ = bonus;
-            bonusFlashTimer_ = 0.9f;
-            bonusFlashX_ = saucer_.x; bonusFlashY_ = saucer_.y;
-            spawnDebris(saucer_.x, saucer_.y, 0.05f, 1.0f, 0.35f, 0.30f);
-            if (audio_) audio_->setSaucer(false);
-            if (audio_ && soundEnabled_) audio_->triggerExplosion();
-            continue;
-        }
-
-        // Bullet vs invaders (box test — the sprites are wide and flat).
-        for (auto& a : aliens_) {
-            if (!a.alive) continue;
-            float dx = b.x - alienX(a), dy = b.y - alienY(a);
-            if (fabsf(dx) < kAlienHW + 0.010f && fabsf(dy) < kAlienHH + 0.016f) {
-                b.alive = false;
-                killAlien(a);
-                break;
-            }
-        }
+        }  // substeps
     }
 }
 
@@ -927,9 +986,7 @@ void Game::updatePowerUps(float dt) {
             bonusFlash_ = bonus;
             bonusFlashTimer_ = 0.9f;
             bonusFlashX_ = pu.x; bonusFlashY_ = pu.y - 0.06f;
-            if (pu.type == PU_SHIELD)      shieldActive_ = true;
-            else if (pu.type == PU_RAPID)  { rapidActive_  = true; rapidTimer_  = kRapidDuration; }
-            else                           { tripleActive_ = true; tripleTimer_ = kRapidDuration; }
+            applyPowerUp(pu.type);
             if (audio_ && soundEnabled_) audio_->triggerPowerUp();
         }
     }

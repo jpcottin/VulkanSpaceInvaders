@@ -122,6 +122,7 @@ private:
     void dropBomb();
     void spawnSaucer();
     void spawnPowerUp(float x, float y);
+    void applyPowerUp(PowerUpType t);
     void killAlien(Alien& a);
     float alienX(const Alien& a) const;
     float alienY(const Alien& a) const;
@@ -132,6 +133,7 @@ private:
     float controlTargetX() const;
     void loadHighScores();
     void saveHighScores();
+    void mergeHighScore(long score, int level);
     void checkHighScore();
     void spawnDebris(float x, float y, float r, float cr, float cg, float cb);
 
@@ -182,6 +184,8 @@ private:
 public:
     void setAudioEngine(AudioEngine* a) { audio_ = a; }
     void setDataPath(const char* path);
+    // Re-read highscores/settings from disk (phone <-> glasses handoff).
+    void reloadFromDisk();
     void setHapticCallback(std::function<void()> fn) { haptic_ = std::move(fn); }
 
     // --- test / debug accessors ---
@@ -227,11 +231,7 @@ public:
     void  spawnTestPowerUp(float x, float y, int type) {
         powerUps_.push_back({x, y, 0.30f, 0.0f, 1.5f, (PowerUpType)type, true});
     }
-    void  activatePowerUpForTest(int type) {
-        if (type == PU_SHIELD)      shieldActive_ = true;
-        else if (type == PU_RAPID)  { rapidActive_  = true; rapidTimer_  = 8.0f; }
-        else                        { tripleActive_ = true; tripleTimer_ = 8.0f; }
-    }
+    void  activatePowerUpForTest(int type) { applyPowerUp((PowerUpType)type); }
     bool  shieldActiveForTest()   const { return shieldActive_; }
     bool  rapidActiveForTest()    const { return rapidActive_; }
     bool  tripleActiveForTest()   const { return tripleActive_; }

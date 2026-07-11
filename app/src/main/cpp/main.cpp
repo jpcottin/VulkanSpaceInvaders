@@ -12,21 +12,26 @@
 #include "audio.h"
 #include "glasses.h"
 
-// Trigger a 50 ms haptic pulse on a detached thread so the game loop never blocks.
-static void triggerHaptic(android_app* app) {
-    JavaVM* vm = app->activity->vm;
-    jobject activityRef = app->activity->clazz;
+// Trigger a 50 ms haptic pulse on a detached thread so the game loop never
+// blocks. The pulse thread gets its own global ref (minted on the calling
+// thread while `activity` is valid), so it can never race NativeActivity
+// deleting its activity reference during teardown.
+static void triggerHaptic(JavaVM* vm, JNIEnv* callerEnv, jobject activity) {
+    if (!callerEnv || !activity) return;
+    jobject ref = callerEnv->NewGlobalRef(activity);
+    if (!ref) return;
 
-    std::thread([vm, activityRef]() {
+    std::thread([vm, ref]() {
         JNIEnv* env = nullptr;
         vm->AttachCurrentThread(&env, nullptr);
         if (!env) return;
 
-        jclass  cls        = env->GetObjectClass(activityRef);
+        jclass  cls        = env->GetObjectClass(ref);
         jstring svcStr     = env->NewStringUTF("vibrator");
         jmethodID getSvc   = env->GetMethodID(cls, "getSystemService",
                                               "(Ljava/lang/String;)Ljava/lang/Object;");
-        jobject vibrator   = env->CallObjectMethod(activityRef, getSvc, svcStr);
+        jobject vibrator   = env->CallObjectMethod(ref, getSvc, svcStr);
+        if (env->ExceptionCheck()) { env->ExceptionClear(); vibrator = nullptr; }
         env->DeleteLocalRef(svcStr);
 
         if (vibrator) {
@@ -40,16 +45,26 @@ static void triggerHaptic(android_app* app) {
                 if (create && doVibrate) {
                     jobject effect = env->CallStaticObjectMethod(veCls, create,
                                                                  (jlong)50, (jint)-1);
-                    env->CallVoidMethod(vibrator, doVibrate, effect);
-                    // Clear any SecurityException (missing VIBRATE permission) so
-                    // the thread exits cleanly instead of crashing the process.
+                    // Calling further JNI with an exception pending is illegal:
+                    // check after each call that can throw.
+                    if (env->ExceptionCheck()) { env->ExceptionClear(); effect = nullptr; }
+                    if (effect) {
+                        env->CallVoidMethod(vibrator, doVibrate, effect);
+                        // Clear any SecurityException (missing VIBRATE permission) so
+                        // the thread exits cleanly instead of crashing the process.
+                        env->ExceptionClear();
+                        env->DeleteLocalRef(effect);
+                    }
+                } else {
                     env->ExceptionClear();
-                    env->DeleteLocalRef(effect);
                 }
                 env->DeleteLocalRef(veCls);
+            } else {
+                env->ExceptionClear();
             }
             env->DeleteLocalRef(vibrator);
         }
+        env->DeleteGlobalRef(ref);
         vm->DetachCurrentThread();
     }).detach();
 }
@@ -60,6 +75,7 @@ struct Engine {
     Game         game;
     AudioEngine  audio;
     bool instanceReady = false;
+    bool focused = true;
     double lastTime = 0.0;
 };
 
@@ -84,6 +100,20 @@ static void handle_cmd(android_app* app, int32_t cmd) {
             e->game.setAudioEngine(nullptr);
             e->audio.shutdown();
             e->renderer.termWindow();
+            break;
+        case APP_CMD_LOST_FOCUS:
+            // Shade pulled, system dialog, multi-window focus change: the
+            // main loop stops updating the game so lives aren't lost
+            // unattended (phone role only — see the paused check there).
+            e->focused = false;
+            break;
+        case APP_CMD_GAINED_FOCUS:
+            e->focused = true;
+            // Another instance (phone <-> glasses) may have saved scores or
+            // settings while we were away; adopt them instead of clobbering
+            // the files with our stale startup copy on the next save.
+            e->game.reloadFromDisk();
+            e->lastTime = now_s();   // don't feed the paused time as one dt
             break;
         default:
             break;
@@ -138,7 +168,19 @@ void android_main(android_app* app) {
 
     engine.instanceReady = engine.renderer.initInstance();
     engine.game.setDataPath(app->activity->internalDataPath);
-    engine.game.setHapticCallback([app]() { triggerHaptic(app); });
+
+    // Keep the game thread JNI-attached for its whole life: glasses polling
+    // reuses the attachment (ScopedEnv's GetEnv succeeds), and haptic pulses
+    // mint their per-pulse global refs from a reference we own instead of
+    // racing NativeActivity's own activity ref against teardown.
+    JNIEnv* mainEnv = nullptr;
+    app->activity->vm->AttachCurrentThread(&mainEnv, nullptr);
+    jobject activityRef =
+        mainEnv ? mainEnv->NewGlobalRef(app->activity->clazz) : nullptr;
+
+    engine.game.setHapticCallback([app, mainEnv, activityRef]() {
+        triggerHaptic(app->activity->vm, mainEnv, activityRef);
+    });
 
     // Phone vs AI-Glasses role: the same android_main runs for both the
     // launcher NativeActivity and GlassesGameActivity (projected display).
@@ -178,6 +220,8 @@ void android_main(android_app* app) {
             if (app->destroyRequested) {
                 if (glassesRole) g_glassesSessionActive = false;
                 engine.renderer.cleanup();
+                if (mainEnv && activityRef) mainEnv->DeleteGlobalRef(activityRef);
+                if (mainEnv) app->activity->vm->DetachCurrentThread();
                 return;
             }
             timeout = 0;  // drain remaining events without blocking
@@ -206,7 +250,9 @@ void android_main(android_app* app) {
             }
 
             engine.game.setViewport(engine.renderer.width(), engine.renderer.height());
-            engine.game.update(dt);
+            // Pause gameplay while unfocused — but only on the phone: the
+            // projected glasses window may never hold window focus at all.
+            if (glassesRole || engine.focused) engine.game.update(dt);
 
             std::vector<DrawCmd> cmds;
             engine.game.render(cmds);
