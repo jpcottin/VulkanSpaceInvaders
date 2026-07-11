@@ -254,6 +254,17 @@ void Game::reloadFromDisk() {
     loadSettings();
 }
 
+// Resume a run after process death: same level, score, and lives, but a
+// fresh wave — entity positions aren't persisted. Bounds-checked because the
+// saved blob comes back from the OS, not from us.
+void Game::restoreSession(int level, long score, int lives) {
+    if (level < 1 || level > 10 || lives < 1 || lives > 3 || score < 0) return;
+    startGame();
+    if (level > 1) startLevel(level);
+    score_ = score;
+    lives_ = lives;
+}
+
 static const uint32_t kSettingsMagic = 0x53455454u;  // "SETT"
 
 // Gear icon world position — single source of truth for both rendering and hit-testing.
@@ -563,8 +574,16 @@ void Game::update(float dt) {
                 state_ = TITLE;
                 level_ = 1;
                 buildFormation();       // rebuild the title demo wave
+                // Clear every battlefield leftover, or it renders frozen on
+                // the title screen forever (nothing updates it there).
                 bombs_.clear();
                 bullets_.clear();
+                powerUps_.clear();
+                saucer_.alive = false;
+                shieldActive_ = false;
+                rapidActive_  = false;
+                tripleActive_ = false;
+                if (audio_) audio_->setSaucer(false);
                 if (audio_) audio_->setMusicEnabled(false);
             }
             break;

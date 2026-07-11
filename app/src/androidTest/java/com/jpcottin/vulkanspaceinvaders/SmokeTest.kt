@@ -69,6 +69,12 @@ class SmokeTest {
                 log.contains("Swapchain ready")
             )
 
+            // Screenshot the verified foreground moment for CI: screencap runs
+            // as the shell user and /data/local/tmp survives the post-test
+            // uninstall, so the uploaded artifact is THIS asserted frame — not
+            // an unverified relaunch after the test.
+            shell("screencap -p /data/local/tmp/smoke.png")
+
             // Capture a screenshot while the game is guaranteed to be in the
             // foreground. App-specific storage avoids EPERM on API 30+.
             val context = InstrumentationRegistry.getInstrumentation().targetContext

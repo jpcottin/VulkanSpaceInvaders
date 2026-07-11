@@ -65,6 +65,7 @@ private:
     std::vector<VkImageView> views_;
     std::vector<VkFramebuffer> framebuffers_;
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
+    VkFormat renderPassFormat_ = VK_FORMAT_UNDEFINED;  // format renderPass_ was built with
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;

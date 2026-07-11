@@ -85,6 +85,15 @@ static double now_s() {
     return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
 }
 
+// Minimal glue save-state: enough to resume a run after process death.
+// Entity positions aren't persisted — the level restarts with a fresh wave
+// but the same level, score, and lives.
+struct SavedGame {
+    int32_t level;
+    int64_t score;
+    int32_t lives;
+};
+
 static void handle_cmd(android_app* app, int32_t cmd) {
     auto* e = (Engine*)app->userData;
     switch (cmd) {
@@ -94,6 +103,20 @@ static void handle_cmd(android_app* app, int32_t cmd) {
                 e->audio.init();
                 e->game.setAudioEngine(&e->audio);
                 e->lastTime = now_s();
+            } else if (app->window && !e->instanceReady) {
+                // No usable Vulkan driver: without this the loop blocks in
+                // ALooper_pollOnce(-1) behind a frozen black window forever.
+                LOGE("Vulkan unavailable — finishing activity");
+                ANativeActivity_finish(app->activity);
+            }
+            break;
+        case APP_CMD_SAVE_STATE:
+            if (e->game.isMidGame()) {
+                auto* s = (SavedGame*)malloc(sizeof(SavedGame));  // glue frees it
+                *s = {(int32_t)e->game.level(), (int64_t)e->game.score(),
+                      (int32_t)e->game.lives()};
+                app->savedState = s;
+                app->savedStateSize = sizeof(SavedGame);
             }
             break;
         case APP_CMD_TERM_WINDOW:
@@ -168,6 +191,14 @@ void android_main(android_app* app) {
 
     engine.instanceReady = engine.renderer.initInstance();
     engine.game.setDataPath(app->activity->internalDataPath);
+    // Tests keep the fixed default seed; production launches should differ.
+    engine.game.seedRng((uint32_t)(now_s() * 1e6));
+
+    // Resume a run killed by the system (see SavedGame above).
+    if (app->savedState && app->savedStateSize == sizeof(SavedGame)) {
+        auto* s = (const SavedGame*)app->savedState;
+        engine.game.restoreSession(s->level, (long)s->score, s->lives);
+    }
 
     // Keep the game thread JNI-attached for its whole life: glasses polling
     // reuses the attachment (ScopedEnv's GetEnv succeeds), and haptic pulses
