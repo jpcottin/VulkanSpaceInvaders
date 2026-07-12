@@ -1474,6 +1474,18 @@ void Game::drawSettingsScreen(std::vector<DrawCmd>& out) {
     drawText(out, "BACK", 0.0f, kSettingBackY, 0.055f, 0.85f, 0.85f, 0.92f, 1.0f);
 }
 
+// The big end-screen score keeps this height until the digit count would
+// clip at the screen sides, then shrinks to fit. drawNumber spaces digit
+// centres 0.87h apart (0.6h glyph width x 1.45) and a glyph spans 0.6h, so
+// n digits span (0.87(n-1) + 0.6)h; a 4-digit score already overflows a
+// portrait phone (~0.95 world units wide) at the full 0.30 height.
+static float endScoreHeight(int digits, float asp) {
+    const float kMaxH = 0.30f;
+    float span = 0.87f * (digits - 1) + 0.60f;
+    float h = 2.0f * asp * 0.90f / span;   // fill at most 90% of the width
+    return h < kMaxH ? h : kMaxH;
+}
+
 void Game::render(std::vector<DrawCmd>& out) {
     // Stars are soft twinkling glow dots so they read as scenery, never as
     // collidable objects — everything dangerous stays sharp-edged. The glow
@@ -1661,7 +1673,7 @@ void Game::render(std::vector<DrawCmd>& out) {
         emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f,
              0.6f, 0.05f, 0.08f, 0.32f + 0.10f * pulse);
         int n = numDigits((int)score_);
-        float fh = 0.30f, fw = fh * 0.6f * 1.45f;
+        float fh = endScoreHeight(n, asp_), fw = fh * 0.6f * 1.45f;
         float firstCx = -(n - 1) * fw * 0.5f;
         // Gold pulsing score if new high score, white otherwise
         float sr = 1.0f, sg = newHighScore_ ? (0.75f + 0.20f*pulse) : 1.0f, sb = newHighScore_ ? 0.10f : 1.0f;
@@ -1678,7 +1690,7 @@ void Game::render(std::vector<DrawCmd>& out) {
         emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f,
              0.1f, 0.5f, 0.15f, 0.30f + 0.10f * pulse);
         int n = numDigits((int)score_);
-        float fh = 0.30f, fw = fh * 0.6f * 1.45f;
+        float fh = endScoreHeight(n, asp_), fw = fh * 0.6f * 1.45f;
         float firstCx = -(n - 1) * fw * 0.5f;
         float sr = 1.0f, sg = newHighScore_ ? (0.80f + 0.15f*pulse) : 0.9f, sb = newHighScore_ ? 0.10f : 0.3f;
         drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);

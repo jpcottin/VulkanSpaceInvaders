@@ -1170,3 +1170,29 @@ TEST(Render, ProducesOutputInEveryReachableState) {
     cmds.clear(); g.render(cmds);
     EXPECT_GT(cmds.size(), 0u) << "GAME_OVER drew nothing";
 }
+
+// The end-screen score must shrink to fit: at the fixed 0.30 glyph height,
+// four digits already touch the sides of a portrait phone and six run far
+// past the edges. Every quad (the digit segments are quads; stars and glows
+// are discs) must stay inside NDC once the dust has settled.
+TEST(Render, EndScreenScoreFitsTheScreen) {
+    Game g;
+    startPlaying(g);
+    g.setScoreForTest(123456);                     // six digits
+    for (int hit = 0; hit < 3; hit++) {
+        g.clearInvulnForTest();
+        g.spawnTestBomb(g.shipX(), 0.50f, 0.6f);
+        step(g, 0.6f);
+    }
+    ASSERT_TRUE(g.isGameOverForTest());
+    step(g, 1.0f);                                 // let shake and debris settle
+    std::vector<DrawCmd> cmds;
+    g.render(cmds);
+    ASSERT_GT(cmds.size(), 0u);
+    for (const auto& c : cmds) {
+        if (c.shape != SHAPE_QUAD) continue;
+        float ext = fabsf(c.mtx[0]) + fabsf(c.mtx[1]);   // NDC half-width
+        EXPECT_LE(fabsf(c.tx) + ext, 1.05f)
+            << "quad past the screen edge at tx=" << c.tx;
+    }
+}
