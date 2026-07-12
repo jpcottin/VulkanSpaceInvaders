@@ -48,9 +48,44 @@ jclass loadAppClass(JNIEnv* env, jobject activity, const char* name) {
     return cls;
 }
 
-jclass bridgeClass(JNIEnv* env, android_app* app) {
-    return loadAppClass(env, app->activity->clazz,
-                        "com.jpcottin.vulkanspaceinvaders.GlassesBridge");
+// GlassesBridge class + static method IDs, resolved once and cached: the
+// connection poll runs every second for the process lifetime, and repeating
+// the ClassLoader.loadClass + GetStaticMethodID dance each time is pure
+// waste. The global ref pins the class, which keeps the jmethodIDs valid.
+// Only the phone instance's game thread calls this — no locking needed.
+struct BridgeCache {
+    jclass    cls             = nullptr;   // global ref
+    jmethodID startMonitoring = nullptr;
+    jmethodID isConnected     = nullptr;
+    jmethodID launchOnGlasses = nullptr;
+};
+BridgeCache g_bridge;
+
+// A failed GetStaticMethodID leaves NoSuchMethodError pending; detaching a
+// thread (ScopedEnv destructor) with it pending would kill the process.
+jmethodID staticMethod(JNIEnv* env, jclass cls, const char* name, const char* sig) {
+    jmethodID m = env->GetStaticMethodID(cls, name, sig);
+    if (!m) { env->ExceptionClear(); LOGW("GlassesBridge.%s not found", name); }
+    return m;
+}
+
+const BridgeCache* bridge(JNIEnv* env, android_app* app) {
+    if (g_bridge.cls) return &g_bridge;
+    jclass cls = loadAppClass(env, app->activity->clazz,
+                              "com.jpcottin.vulkanspaceinvaders.GlassesBridge");
+    if (!cls) { LOGW("GlassesBridge class not found"); return nullptr; }
+    jmethodID start  = staticMethod(env, cls, "startMonitoring",
+                                    "(Landroid/content/Context;)V");
+    jmethodID isConn = staticMethod(env, cls, "isConnected", "()Z");
+    jmethodID launch = staticMethod(env, cls, "launchOnGlasses",
+                                    "(Landroid/app/Activity;)Z");
+    if (!start || !isConn || !launch) return nullptr;
+    g_bridge.cls = (jclass)env->NewGlobalRef(cls);
+    if (!g_bridge.cls) return nullptr;
+    g_bridge.startMonitoring = start;
+    g_bridge.isConnected     = isConn;
+    g_bridge.launchOnGlasses = launch;
+    return &g_bridge;
 }
 
 }  // namespace
@@ -73,12 +108,9 @@ void glassesStartMonitoring(android_app* app) {
     ScopedEnv se(app);
     JNIEnv* env = se.get();
     if (!env) return;
-    jclass cls = bridgeClass(env, app);
-    if (!cls) { LOGW("GlassesBridge class not found"); return; }
-    jmethodID m = env->GetStaticMethodID(cls, "startMonitoring",
-                                         "(Landroid/content/Context;)V");
-    if (!m) { env->ExceptionClear(); LOGW("startMonitoring not found"); return; }
-    env->CallStaticVoidMethod(cls, m, app->activity->clazz);
+    const BridgeCache* b = bridge(env, app);
+    if (!b) return;
+    env->CallStaticVoidMethod(b->cls, b->startMonitoring, app->activity->clazz);
     if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
@@ -86,13 +118,9 @@ bool glassesIsConnected(android_app* app) {
     ScopedEnv se(app);
     JNIEnv* env = se.get();
     if (!env) return false;
-    jclass cls = bridgeClass(env, app);
-    if (!cls) return false;
-    jmethodID m = env->GetStaticMethodID(cls, "isConnected", "()Z");
-    // A failed lookup leaves NoSuchMethodError pending; detaching the thread
-    // (ScopedEnv destructor) with it pending would kill the process.
-    if (!m) { env->ExceptionClear(); return false; }
-    jboolean r = env->CallStaticBooleanMethod(cls, m);
+    const BridgeCache* b = bridge(env, app);
+    if (!b) return false;
+    jboolean r = env->CallStaticBooleanMethod(b->cls, b->isConnected);
     if (env->ExceptionCheck()) { env->ExceptionClear(); return false; }
     return r == JNI_TRUE;
 }
@@ -101,12 +129,10 @@ bool glassesLaunch(android_app* app) {
     ScopedEnv se(app);
     JNIEnv* env = se.get();
     if (!env) return false;
-    jclass cls = bridgeClass(env, app);
-    if (!cls) return false;
-    jmethodID m = env->GetStaticMethodID(cls, "launchOnGlasses",
-                                         "(Landroid/app/Activity;)Z");
-    if (!m) { env->ExceptionClear(); return false; }
-    jboolean r = env->CallStaticBooleanMethod(cls, m, app->activity->clazz);
+    const BridgeCache* b = bridge(env, app);
+    if (!b) return false;
+    jboolean r = env->CallStaticBooleanMethod(b->cls, b->launchOnGlasses,
+                                              app->activity->clazz);
     if (env->ExceptionCheck()) { env->ExceptionClear(); return false; }
     return r == JNI_TRUE;
 }

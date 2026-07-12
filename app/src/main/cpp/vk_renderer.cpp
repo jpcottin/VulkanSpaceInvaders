@@ -84,7 +84,7 @@ static void logExtensionAudit(VkPhysicalDevice phys) {
         {"VK_KHR_swapchain",                                true,  "required — present images to display"},
         {"VK_KHR_maintenance1",                             false, "negative-height viewports — not needed (Y already flipped in shader)"},
         {"VK_KHR_maintenance2",                             false, "input attachment read fixes — no input attachments used"},
-        {"VK_KHR_maintenance3",                             false, "large descriptor sets — single small push-constant layout only"},
+        {"VK_KHR_maintenance3",                             false, "large descriptor sets — empty pipeline layout, no descriptors"},
         {"VK_KHR_dedicated_allocation",                     false, "per-resource memory — single vertex buffer, not worth it"},
         {"VK_KHR_get_memory_requirements2",                 false, "pairs with dedicated_allocation — same reason"},
         {"VK_EXT_memory_budget",                            false, "heap budget queries — renderer allocates once at startup"},
@@ -403,9 +403,12 @@ bool VkRenderer::createVertexBuffer() {
 }
 
 // One host-visible, persistently-mapped instance buffer per frame in flight.
+// Low-latency mode runs a single frame in flight, so it only allocates one
+// set of these (and of the sync/command objects below); teardownDevice null-
+// checks every slot, so the unused ones are simply skipped.
 bool VkRenderer::createInstanceBuffers() {
     VkDeviceSize size = kMaxInstances * sizeof(InstanceData);
-    for (int i = 0; i < kFramesInFlight; i++) {
+    for (int i = 0; i < framesInFlight(); i++) {
         VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         bci.size = size;
         bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
@@ -436,13 +439,13 @@ bool VkRenderer::createSyncAndCommands() {
     VkCommandBufferAllocateInfo cbai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     cbai.commandPool = cmdPool_;
     cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cbai.commandBufferCount = kFramesInFlight;
+    cbai.commandBufferCount = (uint32_t)framesInFlight();
     VK_CHECK(vkAllocateCommandBuffers(device_, &cbai, cmdBufs_));
 
     VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    for (int i = 0; i < kFramesInFlight; i++) {
+    for (int i = 0; i < framesInFlight(); i++) {
         VK_CHECK(vkCreateSemaphore(device_, &sci, nullptr, &imageAvailable_[i]));
         VK_CHECK(vkCreateFence(device_, &fci, nullptr, &inFlight_[i]));
     }

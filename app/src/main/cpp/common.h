@@ -26,17 +26,18 @@ enum Shape {
 
 // Fragment-shader fill styles (DrawCmd::style).
 enum FillStyle {
-    STYLE_FLAT = 0,   // solid push-constant colour (default)
+    STYLE_FLAT = 0,   // solid colour (default)
     STYLE_GLOW = 1,   // radial alpha falloff — soft glows and explosion rings
 };
 
-// One draw: a 2x2 linear transform + NDC translation + RGBA colour, applied to a shape.
-// Matches the push-constant layout consumed by shape.vert/.frag.
+// One draw: a 2x2 linear transform + NDC translation + RGBA colour, applied to
+// a shape. The renderer repacks these into per-instance vertex attributes
+// (InstanceData in vk_renderer.cpp) consumed by shape.vert/.frag.
 struct DrawCmd {
     float mtx[4];   // m00, m01, m10, m11
     float tx, ty;   // NDC translation
     float color[4]; // r, g, b, a
-    float style;    // FillStyle (as float — goes straight into the push constants)
+    float style;    // FillStyle (as float — goes straight into the instance attributes)
     float seed;     // reserved per-draw parameter (unused by current styles)
     int shape;
 };
