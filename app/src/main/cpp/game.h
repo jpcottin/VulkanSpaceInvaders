@@ -128,6 +128,7 @@ private:
     float alienY(const Alien& a) const;
     float marchSpeed() const;
     int   aliveAliens() const;
+    bool  pointerInControlZone(const Pointer& p) const;
     bool  moveHeld() const;
     bool  fireHeld() const;
     float controlTargetX() const;

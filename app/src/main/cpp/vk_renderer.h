@@ -5,8 +5,9 @@
 
 struct ANativeWindow;
 
-// A minimal 2D Vulkan renderer: one pipeline, push-constant transforms, a single
-// vertex buffer holding every shape. Draw a frame by handing it a list of DrawCmd.
+// A minimal 2D Vulkan renderer: one pipeline, per-instance transforms and
+// colours, a single vertex buffer holding every shape. Draw a frame by handing
+// it a list of DrawCmd.
 class VkRenderer {
 public:
     bool initInstance();

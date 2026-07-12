@@ -1,5 +1,6 @@
 #include "game.h"
 #include "audio.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -12,9 +13,9 @@ static int rowsForLevel(int L) {
     return r > 5 ? 5 : r;
 }
 static float levelMarchSpeed(int L) { return 0.09f + 0.020f * (clampLevel(L) - 1); }
+// 1.15 s at level 1 down to 0.52 s at level 10 (clampLevel bounds the range).
 static float levelBombInterval(int L) {
-    float s = 1.15f - 0.07f * (clampLevel(L) - 1);
-    return s < 0.40f ? 0.40f : s;
+    return 1.15f - 0.07f * (clampLevel(L) - 1);
 }
 static int levelMaxBombs(int L) {
     int n = 2 + (clampLevel(L) - 1) / 3;
@@ -53,6 +54,21 @@ static const float kCtrlZoneTopW = 0.70f;  // same boundary in world y
 
 // Per-tier kill points (x level): squid (top), crab (middle), octopus (bottom).
 static const int kAlienScore[3] = {30, 20, 10};
+
+// Per-tier tint, shared by the sprites and their kill debris.
+static const float kTierCol[3][3] = {
+    {0.78f, 0.45f, 1.00f},   // squid: purple
+    {0.30f, 0.95f, 0.55f},   // crab: green
+    {1.00f, 0.70f, 0.20f},   // octopus: amber
+};
+
+// High-score podium colours (gold/silver/bronze), shared by the title table
+// and the rank digit on the game-over/win screens.
+static const float kPodiumCol[3][3] = {
+    {1.00f, 0.85f, 0.20f},   // gold
+    {0.78f, 0.82f, 0.92f},   // silver
+    {0.72f, 0.47f, 0.22f},   // bronze
+};
 static const int kSaucerScore   = 100;
 static const int kPowerUpScore  = 25;
 static const int kLevelClearScore = 100;
@@ -117,16 +133,19 @@ void Game::setViewport(int w, int h) {
 
 // In CONTROL_TOUCHBAR mode (AI glasses) the whole surface is the control bar;
 // in CONTROL_STRIP mode only the bottom strip counts.
+bool Game::pointerInControlZone(const Pointer& p) const {
+    return p.active && (controlMode_ == CONTROL_TOUCHBAR || p.y > vh_ * kCtrlZoneFrac);
+}
+
 bool Game::moveHeld() const {
     for (auto& p : pointers_)
-        if (p.active && (controlMode_ == CONTROL_TOUCHBAR || p.y > vh_ * kCtrlZoneFrac))
-            return true;
+        if (pointerInControlZone(p)) return true;
     return autoPlayActive_ && aiMove_;
 }
 
 float Game::controlTargetX() const {
     for (auto& p : pointers_)
-        if (p.active && (controlMode_ == CONTROL_TOUCHBAR || p.y > vh_ * kCtrlZoneFrac))
+        if (pointerInControlZone(p))
             return (2.0f * p.x / vw_ - 1.0f) * asp_;
     return aiTargetX_;   // only reached when auto-play set aiMove_
 }
@@ -134,8 +153,7 @@ float Game::controlTargetX() const {
 bool Game::fireHeld() const {
     if (autoPlayActive_ && aiFire_) return true;
     for (auto& p : pointers_)
-        if (p.active && (controlMode_ == CONTROL_TOUCHBAR || p.y > vh_ * kCtrlZoneFrac))
-            return true;
+        if (pointerInControlZone(p)) return true;
     return false;
 }
 
@@ -479,16 +497,18 @@ void Game::update(float dt) {
         p.t   += dt;
         if (p.t >= p.maxLife) p.alive = false;
     }
-    for (size_t i = particles_.size(); i-- > 0;)
-        if (!particles_[i].alive) particles_.erase(particles_.begin() + i);
+    particles_.erase(std::remove_if(particles_.begin(), particles_.end(),
+                                    [](const Particle& p) { return !p.alive; }),
+                     particles_.end());
 
     for (auto& e : explosions_) {
         if (!e.alive) continue;
         e.t += dt;
         if (e.t >= e.maxLife) e.alive = false;
     }
-    for (size_t i = explosions_.size(); i-- > 0;)
-        if (!explosions_[i].alive) explosions_.erase(explosions_.begin() + i);
+    explosions_.erase(std::remove_if(explosions_.begin(), explosions_.end(),
+                                     [](const Explosion& e) { return !e.alive; }),
+                      explosions_.end());
 
     // Stars scroll in every state for a sense of motion.
     for (auto& s : stars_) {
@@ -560,11 +580,11 @@ void Game::update(float dt) {
             break;
         }
         case LEVEL_CLEAR: {
+            // Level 10 never enters LEVEL_CLEAR: the boss level ends only by
+            // killing the mothership, which jumps straight to WIN in
+            // updateBullets. There is always a next level to start here.
             stateTimer_ += dt;
-            if (stateTimer_ >= 1.8f) {
-                if (level_ >= 10) { state_ = WIN; stateTimer_ = 0.0f; checkHighScore(); }
-                else startLevel(level_ + 1);
-            }
+            if (stateTimer_ >= 1.8f) startLevel(level_ + 1);
             break;
         }
         case GAME_OVER:
@@ -831,11 +851,6 @@ void Game::applyPowerUp(PowerUpType t) {
 void Game::killAlien(Alien& a) {
     a.alive = false;
     float ax = alienX(a), ay = alienY(a);
-    static const float kTierCol[3][3] = {
-        {0.78f, 0.45f, 1.00f},   // squid: purple
-        {0.30f, 0.95f, 0.55f},   // crab: green
-        {1.00f, 0.70f, 0.20f},   // octopus: amber
-    };
     const float* c = kTierCol[a.type];
     spawnDebris(ax, ay, kAlienHW, c[0], c[1], c[2]);
     score_ += (long)kAlienScore[a.type] * level_;
@@ -1009,15 +1024,18 @@ void Game::updatePowerUps(float dt) {
             if (audio_ && soundEnabled_) audio_->triggerPowerUp();
         }
     }
-    for (size_t i = powerUps_.size(); i-- > 0;)
-        if (!powerUps_[i].alive) powerUps_.erase(powerUps_.begin() + i);
+    powerUps_.erase(std::remove_if(powerUps_.begin(), powerUps_.end(),
+                                   [](const PowerUp& pu) { return !pu.alive; }),
+                    powerUps_.end());
 }
 
 void Game::removeDeadEntities() {
-    for (size_t i = bullets_.size(); i-- > 0;)
-        if (!bullets_[i].alive) bullets_.erase(bullets_.begin() + i);
-    for (size_t i = bombs_.size(); i-- > 0;)
-        if (!bombs_[i].alive) bombs_.erase(bombs_.begin() + i);
+    bullets_.erase(std::remove_if(bullets_.begin(), bullets_.end(),
+                                  [](const Bullet& b) { return !b.alive; }),
+                   bullets_.end());
+    bombs_.erase(std::remove_if(bombs_.begin(), bombs_.end(),
+                                [](const Bomb& b) { return !b.alive; }),
+                 bombs_.end());
     // aliens_ keeps dead entries: slot positions derive from (row, col).
 }
 
@@ -1269,11 +1287,6 @@ void Game::drawAlien(std::vector<DrawCmd>& out, const Alien& a, float cx, float 
                      float alpha) {
     static const int kFrame0[3] = {SHAPE_INVADER_A0, SHAPE_INVADER_B0, SHAPE_INVADER_C0};
     static const int kFrame1[3] = {SHAPE_INVADER_A1, SHAPE_INVADER_B1, SHAPE_INVADER_C1};
-    static const float kTierCol[3][3] = {
-        {0.78f, 0.45f, 1.00f},   // squid: purple
-        {0.30f, 0.95f, 0.55f},   // crab: green
-        {1.00f, 0.70f, 0.20f},   // octopus: amber
-    };
     int shape = (marchFrame_ ? kFrame1 : kFrame0)[a.type];
     const float* c = kTierCol[a.type];
     emit(out, shape, cx, cy, kAlienHW, kAlienHH, 0.0f, c[0], c[1], c[2], alpha);
@@ -1328,7 +1341,7 @@ void Game::drawBossHealthBar(std::vector<DrawCmd>& out) {
 void Game::drawControlStrip(std::vector<DrawCmd>& out) {
     bool held = false;
     for (auto& p : pointers_)
-        if (p.active && p.y > vh_ * kCtrlZoneFrac) { held = true; break; }
+        if (pointerInControlZone(p)) { held = true; break; }
 
     float cy = (kCtrlZoneTopW + 1.0f) * 0.5f;
     float hh = (1.0f - kCtrlZoneTopW) * 0.5f;
@@ -1626,13 +1639,10 @@ void Game::render(std::vector<DrawCmd>& out) {
         drawText(out, "INVADERS", 0.0f, -0.58f, 0.092f, 0.30f, 0.85f, 0.48f, 1.0f);
 
         // High score podium (top 3, gold/silver/bronze)
-        static const float kPodR[3] = {1.00f, 0.78f, 0.72f};
-        static const float kPodG[3] = {0.85f, 0.82f, 0.47f};
-        static const float kPodB[3] = {0.20f, 0.92f, 0.22f};
         const float hh = 0.048f, rowY[3] = {0.06f, 0.16f, 0.26f};
         for (int i = 0; i < 3; i++) {
             if (highScores_[i].score <= 0) break;
-            float pr = kPodR[i], pg = kPodG[i], pb = kPodB[i];
+            float pr = kPodiumCol[i][0], pg = kPodiumCol[i][1], pb = kPodiumCol[i][2];
             // Rank ship icon
             drawShip(out, -asp_*0.72f, rowY[i], 0.020f, 0.0f, 1.0f);
             // Score
@@ -1658,12 +1668,10 @@ void Game::render(std::vector<DrawCmd>& out) {
         drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
         // Rank digit above score when it's a new high score
         if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
-            static const float kPodR[3] = {1.00f, 0.78f, 0.72f};
-            static const float kPodG[3] = {0.85f, 0.82f, 0.47f};
-            static const float kPodB[3] = {0.20f, 0.92f, 0.22f};
             int ri = newHighScoreRank_;
             drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f,
-                      kPodR[ri], kPodG[ri], kPodB[ri], 0.65f + 0.35f * pulse);
+                      kPodiumCol[ri][0], kPodiumCol[ri][1], kPodiumCol[ri][2],
+                      0.65f + 0.35f * pulse);
         }
         drawShip(out, 0.0f, 0.5f, 0.05f, 0.0f, 0.3f + 0.6f * pulse);
     } else if (state_ == WIN) {
@@ -1675,12 +1683,10 @@ void Game::render(std::vector<DrawCmd>& out) {
         float sr = 1.0f, sg = newHighScore_ ? (0.80f + 0.15f*pulse) : 0.9f, sb = newHighScore_ ? 0.10f : 0.3f;
         drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
         if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
-            static const float kPodR[3] = {1.00f, 0.78f, 0.72f};
-            static const float kPodG[3] = {0.85f, 0.82f, 0.47f};
-            static const float kPodB[3] = {0.20f, 0.92f, 0.22f};
             int ri = newHighScoreRank_;
             drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f,
-                      kPodR[ri], kPodG[ri], kPodB[ri], 0.65f + 0.35f * pulse);
+                      kPodiumCol[ri][0], kPodiumCol[ri][1], kPodiumCol[ri][2],
+                      0.65f + 0.35f * pulse);
         }
         drawShip(out, 0.0f, 0.5f, 0.05f, 0.0f, 0.3f + 0.6f * pulse);
     }
