@@ -1154,6 +1154,25 @@ TEST(AutoPlay, ShootsDownABombInItsColumn) {
     EXPECT_EQ(g.bombCount(), 0);
 }
 
+TEST(AutoPlay, WaitsOutABombLaneInItsPath) {
+    Game g;
+    startPlaying(g);
+    g.setAutoPlayForTest(true);
+    g.setFormationYForTest(-3.0f);              // aliens too far to matter
+    g.setSaucerForTest(0.35f, 0.0f);            // stable target beyond the lane
+    // A bomb lane between the ship and the target, timed to reach the ship's
+    // altitude just as the ship would cross it: chasing the saucer straight
+    // walks into the bomb. The AI must hold short of the lane instead.
+    g.spawnTestBomb(0.18f, 0.525f, 0.5f);
+    g.update(0.016f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    EXPECT_LT(g.aiTargetXForTest(), 0.10f);
+    // And it survives: the bomb passes, then the hunt resumes.
+    g.clearInvulnForTest();
+    step(g, 2.5f);
+    EXPECT_EQ(g.lives(), 3);
+}
+
 TEST(AutoPlay, AimNeverLeadsPastTheEdgeBounce) {
     Game g;
     startPlaying(g);
