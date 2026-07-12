@@ -1120,6 +1120,55 @@ TEST(AutoPlay, LeadsTheSaucer) {
     EXPECT_GT(g.aiTargetXForTest(), -0.2f);
 }
 
+TEST(AutoPlay, DodgeConsidersEveryBomb) {
+    Game g;
+    startPlaying(g);
+    g.setAutoPlayForTest(true);
+    g.setFormationYForTest(-3.0f);              // nothing else to react to
+    // One bomb dead ahead and a second parked over the near-left escape
+    // spot: a soonest-bomb-only dodge hops straight toward the second bomb.
+    // The only clean escape is to the right.
+    g.spawnTestBomb(0.0f,   0.30f, 0.5f);
+    g.spawnTestBomb(-0.16f, 0.30f, 0.5f);
+    g.update(0.016f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    EXPECT_GT(g.aiTargetXForTest(), 0.1f);
+    g.clearInvulnForTest();
+    step(g, 2.0f);
+    EXPECT_EQ(g.lives(), 3);
+}
+
+TEST(AutoPlay, ShootsDownABombInItsColumn) {
+    Game g;
+    startPlaying(g);
+    g.setAutoPlayForTest(true);
+    g.setFormationYForTest(-3.0f);              // no alien target to align on
+    g.setShipXForTest(0.40f);                   // and none anywhere near us
+    g.spawnTestBomb(0.40f, 0.30f, 0.5f);        // falling straight at the ship
+    g.update(0.016f);
+    EXPECT_TRUE(g.aiFireForTest());
+    // The volley connects: the bomb dies to a laser before reaching the ship.
+    g.clearInvulnForTest();
+    step(g, 1.0f);
+    EXPECT_EQ(g.lives(), 3);
+    EXPECT_EQ(g.bombCount(), 0);
+}
+
+TEST(AutoPlay, AimNeverLeadsPastTheEdgeBounce) {
+    Game g;
+    startPlaying(g);
+    g.setAutoPlayForTest(true);
+    // Only the bottom-right alien survives, parked almost at the right
+    // margin: the wave is about to bounce, so the lead must fold back
+    // instead of chasing an aim point the alien can never reach.
+    for (int i = 0; i < g.alienTotalForTest(); i++)
+        if (i != slot(2, 7)) g.killAlienForTest(i);
+    g.setFormationXForTest(0.079f);             // alien x ~= right bounce point
+    g.update(0.016f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    EXPECT_LT(g.aiTargetXForTest(), aspect() - 0.015f);
+}
+
 TEST(AutoPlay, ClearsAWaveEventually) {
     Game g;
     startPlaying(g);
