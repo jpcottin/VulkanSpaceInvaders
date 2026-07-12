@@ -1062,20 +1062,82 @@ void Game::checkLevelClear() {
 void Game::updateAutoPlay(float dt) {
     // Triple shot covers a wider cone, so alignment can be looser.
     const float kAlignThresh = tripleActive_ ? 0.10f : 0.030f;
+    const float kHorizon = 0.9f;   // seconds of bomb look-ahead
+    const float kRadius  = 0.11f;  // impact this close to x counts as a hit
 
-    // 1) Threat scan: the bomb that will reach our altitude soonest and lands
-    //    close enough to matter (boss bombs drift sideways — predict impact x).
-    const Bomb* threat = nullptr;
-    float threatT = 1e9f, threatX = 0.0f;
+    // 1) Threat model: how much incoming fire lands near x within the
+    //    horizon, urgency-weighted (boss bombs drift sideways — predict the
+    //    impact x). Scoring candidate positions against *every* bomb keeps a
+    //    dodge from sidestepping into the next bomb over, which the old
+    //    soonest-bomb-only logic did.
+    auto dangerAt = [&](float x) {
+        float d = 0.0f;
+        for (auto& b : bombs_) {
+            if (!b.alive || b.vy <= 0.0f) continue;
+            float tHit = (shipY_ - b.y) / b.vy;
+            // Slightly negative tHit: the bomb just crossed our altitude but
+            // still overlaps the ship's collision band — steering onto its
+            // column now would clip it.
+            if (tHit < -0.15f || tHit > kHorizon) continue;
+            if (tHit < 0.0f) tHit = 0.0f;
+            float dx = fabsf(b.x + b.vx * tHit - x);
+            if (dx < kRadius) d += (kRadius - dx) * (kHorizon - tHit);
+        }
+        return d;
+    };
+
+    // Lethality of walking from the ship to x: a bomb lane on the way only
+    // matters if the ship would cross it at about the moment the bomb
+    // reaches our altitude — a lane whose bomb is still far above (or long
+    // gone) is safe to pass under.
+    auto crossDanger = [&](float x) {
+        float d = 0.0f;
+        float dir  = x >= shipX_ ? 1.0f : -1.0f;
+        float span = (x - shipX_) * dir;
+        for (auto& b : bombs_) {
+            if (!b.alive || b.vy <= 0.0f) continue;
+            float tHit = (shipY_ - b.y) / b.vy;
+            // Same just-passed allowance as dangerAt: a bomb barely below
+            // our altitude still fills its lane for a beat.
+            if (tHit < -0.15f || tHit > kHorizon) continue;
+            if (tHit < 0.0f) tHit = 0.0f;
+            float along = (b.x + b.vx * tHit - shipX_) * dir;
+            if (along < 0.0f || along > span) continue;   // lane not on the way
+            float gap = fabsf(tHit - along / shipSpeed_);
+            const float kCrossWin = 0.25f;   // arrive within this of the bomb: lethal
+            if (gap < kCrossWin) d += kCrossWin - gap;
+        }
+        return d;
+    };
+    float soonestT = 1e9f, soonestX = 0.0f;
     for (auto& b : bombs_) {
         if (!b.alive || b.vy <= 0.0f) continue;
         float tHit = (shipY_ - b.y) / b.vy;
-        if (tHit < 0.0f || tHit > 0.9f) continue;
+        if (tHit < 0.0f || tHit > kHorizon || tHit >= soonestT) continue;
         float impactX = b.x + b.vx * tHit;
-        if (fabsf(impactX - shipX_) < 0.11f && tHit < threatT) {
-            threatT = tHit;
-            threatX = impactX;
-            threat = &b;
+        if (fabsf(impactX - shipX_) < kRadius) { soonestT = tHit; soonestX = impactX; }
+    }
+    bool threatened = soonestT < 1e9f;
+
+    // Escape plan: sample positions outward from the ship and take the
+    // cheapest — safe beats close, close beats far, positions we can't
+    // reach before the soonest impact are penalised, and exact ties break
+    // away from that impact.
+    float dodgeX = shipX_;
+    if (threatened) {
+        const float kStep = 0.08f;
+        float lim   = asp_ - shipScale_;
+        float reach = shipSpeed_ * soonestT;
+        float best  = 1e9f;
+        for (int k = -8; k <= 8; k++) {
+            float x = shipX_ + (float)k * kStep;
+            if (x < -lim) x = -lim;
+            if (x >  lim) x =  lim;
+            float dist = fabsf(x - shipX_);
+            float cost = dangerAt(x) * 100.0f + crossDanger(x) * 50.0f + dist * 0.01f;
+            if (dist > reach) cost += 1.0f;
+            if ((x - shipX_) * (soonestX - shipX_) > 0.0f) cost += 0.0001f;
+            if (cost < best) { best = cost; dodgeX = x; }
         }
     }
 
@@ -1094,12 +1156,30 @@ void Game::updateAutoPlay(float dt) {
         if (fabsf(aim) < asp_ - shipScale_) { targetX = aim; hasTarget = true; }
     }
     if (!hasTarget) {
+        // The wave reverses when its outermost alive alien reaches a side
+        // margin, so a lead can't run past the bounce point — it folds back.
+        // (The old straight-line lead missed every shot near a bounce.)
+        float minX = 1e9f, maxX = -1e9f;
+        for (auto& a : aliens_) {
+            if (!a.alive) continue;
+            float x = alienX(a);
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+        }
+        float distToBounce = (marchDir_ > 0)
+            ? (asp_ - kSideMargin - kAlienHW) - maxX
+            : minX - (-asp_ + kSideMargin + kAlienHW);
+        if (distToBounce < 0.0f) distToBounce = 0.0f;
         float bestDx = 1e9f;
         for (auto& a : aliens_) {
             if (!a.alive) continue;
             float ax  = alienX(a);
             float tFly = (shipY_ - alienY(a)) / kBulletSpeed;
-            float aim = ax + marchDir_ * marchSpeed() * tFly;
+            float travel = marchSpeed() * tFly;
+            float off = travel <= distToBounce
+                ? travel
+                : distToBounce - (travel - distToBounce);   // folds back
+            float aim = ax + marchDir_ * off;
             float dx  = fabsf(aim - shipX_);
             if (dx < bestDx) { bestDx = dx; targetX = aim; hasTarget = true; }
         }
@@ -1107,7 +1187,7 @@ void Game::updateAutoPlay(float dt) {
 
     // 3) Power-up interception, only when nothing is shooting at us.
     const PowerUp* collect = nullptr;
-    if (!threat) {
+    if (!threatened) {
         float bestT = 1e9f;
         for (auto& pu : powerUps_) {
             if (!pu.alive) continue;
@@ -1121,24 +1201,55 @@ void Game::updateAutoPlay(float dt) {
         }
     }
 
-    // Steering priority: dodge > collect > align.
-    if (threat) {
-        float dir = (threatX >= shipX_) ? -1.0f : 1.0f;
-        float target = shipX_ + dir * 0.24f;
+    // Steer toward `desired` without volunteering into fire: stopping points
+    // (the exact target included) are scored by whether a bomb lands there
+    // (dangerAt) and whether the walk crosses a bomb lane just as its bomb
+    // arrives (crossDanger), so a hunt or collect route stops at the edge of
+    // a hot lane instead of marching the ship under a falling bomb. With
+    // clear skies every cost is zero and `desired` wins unchanged.
+    auto steer = [&](float desired) {
         float lim = asp_ - shipScale_;
-        if (target > lim || target < -lim) target = shipX_ - dir * 0.24f;
-        aiTargetX_ = target;
+        if (desired >  lim) desired =  lim;
+        if (desired < -lim) desired = -lim;
+        auto costAt = [&](float x) {
+            return dangerAt(x) * 100.0f + crossDanger(x) * 50.0f
+                 + fabsf(x - desired);
+        };
+        float bestX = desired;
+        float best  = costAt(desired);
+        for (int k = -8; k <= 8; k++) {
+            float x = shipX_ + (float)k * 0.08f;
+            if (x < -lim) x = -lim;
+            if (x >  lim) x =  lim;
+            float c = costAt(x);
+            if (c < best) { best = c; bestX = x; }
+        }
+        return bestX;
+    };
+
+    // Steering priority: dodge > collect > align.
+    if (threatened) {
+        aiTargetX_ = dodgeX;
         aiMove_ = true;
     } else if (collect) {
-        aiTargetX_ = collect->x;
+        aiTargetX_ = steer(collect->x);
         aiMove_ = true;
     } else if (hasTarget) {
-        aiTargetX_ = targetX;
+        aiTargetX_ = steer(targetX);
         aiMove_ = true;
     }
 
-    // Fire whenever we're lined up on something worth hitting.
+    // Fire whenever we're lined up on something worth hitting…
     if (hasTarget && fabsf(targetX - shipX_) < kAlignThresh) aiFire_ = true;
+    // …and at any bomb above us in our firing column: the bullet-vs-bomb
+    // check in updateBullets cancels both, clearing the lane the ship is
+    // dodging through (or standing in, when the dodge can't outrun it).
+    if (!aiFire_) {
+        for (auto& b : bombs_) {
+            if (!b.alive || b.vy <= 0.0f || b.y >= shipY_) continue;
+            if (fabsf(b.x - shipX_) < 0.025f) { aiFire_ = true; break; }
+        }
+    }
     (void)dt;
 }
 
