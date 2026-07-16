@@ -96,6 +96,7 @@ private:
 
     bool deviceReady_ = false;
     bool swapchainReady_ = false;
+    bool firstFramePresented_ = false;   // logged once, the smoke test's capture cue
     bool lowLatency_ = false;
     float renderScale_ = 1.0f;
 
