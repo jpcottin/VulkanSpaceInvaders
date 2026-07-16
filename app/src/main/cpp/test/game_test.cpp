@@ -1264,3 +1264,235 @@ TEST(Render, EndScreenScoreFitsTheScreen) {
             << "quad past the screen edge at tx=" << c.tx;
     }
 }
+
+// ── Process-death resume ────────────────────────────────────────────────────────
+
+TEST(RestoreSession, ResumesLevelScoreAndLives) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.restoreSession(5, 4200, 2);              // OS handed back a mid-run snapshot
+    EXPECT_TRUE(g.isPlayingForTest());
+    EXPECT_EQ(g.level(), 5);
+    EXPECT_EQ(g.score(), 4200);
+    EXPECT_EQ(g.lives(), 2);
+    EXPECT_EQ(g.alienRowsForTest(), 5);        // level>1 ran startLevel: 5 rows at L5
+}
+
+TEST(RestoreSession, RejectsOutOfRangeInput) {
+    // The blob comes back from the OS, not from us: any out-of-range field must
+    // be rejected wholesale, leaving a fresh game untouched on the title screen.
+    for (int badLevel : {0, 11}) {
+        Game g; g.setViewport(kW, kH);
+        g.restoreSession(badLevel, 100, 2);
+        EXPECT_TRUE(g.inTitleForTest()) << "level=" << badLevel;
+    }
+    { Game g; g.setViewport(kW, kH); g.restoreSession(3, -1,  2); EXPECT_TRUE(g.inTitleForTest()); }
+    { Game g; g.setViewport(kW, kH); g.restoreSession(3, 100, 0); EXPECT_TRUE(g.inTitleForTest()); }
+    { Game g; g.setViewport(kW, kH); g.restoreSession(3, 100, 4); EXPECT_TRUE(g.inTitleForTest()); }
+}
+
+// ── High-score persistence (disk merge / dedup / reload) ─────────────────────────
+
+// Drive a game straight to a game-over at the given score, which saves the
+// high-score table to disk. ASSERTs live in a void helper (legal in gtest).
+static void gameOverAtScore(Game& g, long s) {
+    ASSERT_TRUE(g.isPlayingForTest());
+    g.setScoreForTest(s);
+    g.setFormationYForTest(0.72f);             // invasion => instant game over
+    g.update(1.0f / 60.0f);
+    ASSERT_TRUE(g.isGameOverForTest());
+}
+
+static const char* scratchDir() {
+    const char* dir = getenv("TMPDIR");
+    if (!dir || !dir[0]) dir = "/data/local/tmp";
+    return dir;
+}
+
+// Two Game objects share the file (as the phone and glasses instances do) but
+// never see each other's in-memory table. On save, each must fold the disk
+// table into its own so a stale copy can't clobber a score saved meanwhile.
+TEST(HighScores, SaveMergesDiskTableWithoutClobbering) {
+    const char* dir = scratchDir();
+    char path[512];
+    snprintf(path, sizeof(path), "%s/highscores.bin", dir);
+    remove(path);
+
+    Game a; a.setViewport(kW, kH); a.setDataPath(dir); a.triggerNewGameForTest();
+    Game b; b.setViewport(kW, kH); b.setDataPath(dir); b.triggerNewGameForTest();
+    gameOverAtScore(a, 500);                    // file: {500}
+    gameOverAtScore(b, 300);                    // b never loaded 500, yet save keeps it
+
+    Game c; c.setViewport(kW, kH); c.setDataPath(dir);   // read the merged file back
+    EXPECT_EQ(c.highScoreForTest(0), 500);
+    EXPECT_EQ(c.highScoreForTest(1), 300);
+    remove(path);
+}
+
+TEST(HighScores, MergeSkipsExactDuplicates) {
+    const char* dir = scratchDir();
+    char path[512];
+    snprintf(path, sizeof(path), "%s/highscores.bin", dir);
+    remove(path);
+
+    // Both instances end an identical fresh run (score 500, level 1). The shared
+    // row must appear once, not doubled.
+    Game a; a.setViewport(kW, kH); a.setDataPath(dir); a.triggerNewGameForTest();
+    Game b; b.setViewport(kW, kH); b.setDataPath(dir); b.triggerNewGameForTest();
+    gameOverAtScore(a, 500);
+    gameOverAtScore(b, 500);
+
+    Game c; c.setViewport(kW, kH); c.setDataPath(dir);
+    EXPECT_EQ(c.highScoreForTest(0), 500);
+    EXPECT_EQ(c.highScoreForTest(1), 0);        // the identical run wasn't doubled
+    remove(path);
+}
+
+TEST(HighScores, ReloadFromDiskAdoptsPersistedTable) {
+    const char* dir = scratchDir();
+    char path[512];
+    snprintf(path, sizeof(path), "%s/highscores.bin", dir);
+    remove(path);
+
+    Game b; b.setViewport(kW, kH); b.setDataPath(dir);   // loads empty file
+    {
+        Game a; a.setViewport(kW, kH); a.setDataPath(dir); a.triggerNewGameForTest();
+        gameOverAtScore(a, 700);                // a writes {700} while b is idle
+    }
+    EXPECT_EQ(b.highScoreForTest(0), 0);        // b hasn't seen it yet
+    b.reloadFromDisk();                         // phone<->glasses handoff
+    EXPECT_EQ(b.highScoreForTest(0), 700);
+    remove(path);
+}
+
+TEST(HighScores, ZeroScoreIsNotRecorded) {
+    Game g;
+    startPlaying(g);
+    g.setScoreForTest(0);
+    g.setFormationYForTest(0.72f);
+    g.update(0.016f);
+    ASSERT_TRUE(g.isGameOverForTest());
+    EXPECT_EQ(g.highScoreForTest(0), 0);        // a zero run never claims a rank
+}
+
+// ── Invasion / progression edges ─────────────────────────────────────────────────
+
+TEST(March, InvasionEndsGameEvenWithShield) {
+    Game g;
+    startPlaying(g);
+    g.activatePowerUpForTest((int)Game::PU_SHIELD);
+    ASSERT_TRUE(g.shieldActiveForTest());
+    g.setFormationYForTest(0.72f);
+    g.update(0.016f);
+    EXPECT_TRUE(g.isGameOverForTest());         // a shield can't stop an invasion
+    EXPECT_EQ(g.lives(), 0);
+}
+
+TEST(Progression, GameOverIgnoresEarlyTap) {
+    Game g;
+    startPlaying(g);
+    g.setFormationYForTest(0.72f);
+    g.update(0.016f);
+    ASSERT_TRUE(g.isGameOverForTest());
+    tap(g, kW * 0.5f, kH * 0.5f);               // within the 0.6 s grace
+    g.update(0.016f);
+    EXPECT_TRUE(g.isGameOverForTest());         // ignored: don't skip the death screen
+    step(g, 0.7f);
+    tap(g, kW * 0.5f, kH * 0.5f);               // after the grace
+    g.update(0.016f);
+    EXPECT_TRUE(g.inTitleForTest());
+}
+
+TEST(Progression, TitleReturnClearsLeftovers) {
+    Game g;
+    startPlaying(g);
+    g.activatePowerUpForTest((int)Game::PU_SHIELD);
+    g.spawnTestBomb(0.0f, 0.0f, 0.30f);
+    g.setSaucerForTest(0.0f, 0.0f);
+    ASSERT_GT(g.bombCount(), 0);
+    ASSERT_TRUE(g.saucerAliveForTest());
+    g.setFormationYForTest(0.72f);
+    g.update(0.016f);                           // invasion freezes the leftovers
+    ASSERT_TRUE(g.isGameOverForTest());
+    ASSERT_GT(g.bombCount(), 0);                // still present on the end screen
+    step(g, 0.7f);
+    tap(g, kW * 0.5f, kH * 0.5f);
+    g.update(0.016f);
+    ASSERT_TRUE(g.inTitleForTest());
+    EXPECT_EQ(g.bombCount(), 0);                // wiped so nothing renders frozen
+    EXPECT_EQ(g.bulletCount(), 0);
+    EXPECT_FALSE(g.saucerAliveForTest());
+    EXPECT_FALSE(g.shieldActiveForTest());
+}
+
+TEST(Progression, LevelClearWipesInFlightBombs) {
+    Game g;
+    startPlaying(g);
+    g.spawnTestBomb(0.20f, -0.20f, 0.30f);      // a bomb nowhere near the ship
+    ASSERT_GT(g.bombCount(), 0);
+    for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
+    g.update(0.016f);
+    ASSERT_TRUE(g.isLevelClearForTest());
+    EXPECT_EQ(g.bombCount(), 0);                // in-flight fire doesn't cross levels
+    EXPECT_EQ(g.bulletCount(), 0);
+}
+
+TEST(Progression, LevelClearBonusScalesWithLevel) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(9);
+    long before = g.score();
+    for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
+    g.update(0.016f);
+    ASSERT_TRUE(g.isLevelClearForTest());
+    EXPECT_EQ(g.score() - before, 100L * 9);    // clear bonus is 100 x level
+}
+
+TEST(Levels, LevelClampsAtTen) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(11);                    // past the last level
+    EXPECT_EQ(g.level(), 10);                   // clamped to the boss level
+    EXPECT_TRUE(g.bossActiveForTest());
+}
+
+// ── Misc gameplay branches ───────────────────────────────────────────────────────
+
+TEST(Saucer, NeverSpawnsDuringBossFight) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    ASSERT_TRUE(g.bossActiveForTest());
+    // Far longer than the max tease interval (~22 s): the mothership owns the
+    // top of the screen, so no saucer may ever appear.
+    for (int i = 0; i < 60 * 30; i++) {
+        ASSERT_FALSE(g.saucerAliveForTest());
+        g.update(1.0f / 60.0f);
+    }
+}
+
+TEST(Update, ClampsHugeDtHitch) {
+    // A giant frame is clamped to 0.05 s so the ship can't warp on a hitch.
+    // Same held finger: a 1 s frame must move the ship exactly like a 0.05 s one.
+    Game huge; startPlaying(huge);
+    Game ref;  startPlaying(ref);
+    huge.onPointerDown(0, pxOf(0.30f), ctrlPy());   // steer right, out of reach
+    ref.onPointerDown(0, pxOf(0.30f), ctrlPy());    // in a single clamped frame
+    huge.update(1.0f);
+    ref.update(0.05f);
+    EXPECT_FLOAT_EQ(huge.shipX(), ref.shipX());
+    EXPECT_GT(huge.shipX(), 0.0f);
+    EXPECT_LT(huge.shipX(), 0.30f);
+}
+
+TEST(PowerUps, UncollectedFallsPastWithoutEffect) {
+    Game g;
+    startPlaying(g);
+    g.setFormationYForTest(-3.0f);              // clear the lane, no interference
+    long before = g.score();
+    // Well to the side of the ship, so it falls past uncollected and despawns.
+    g.spawnTestPowerUp(g.shipX() + 0.5f, -0.9f, (int)Game::PU_RAPID);
+    step(g, 8.0f);                              // vy 0.30 over the full height
+    EXPECT_FALSE(g.rapidActiveForTest());       // never granted its effect
+    EXPECT_EQ(g.score(), before);              // and never scored
+}

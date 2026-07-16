@@ -170,24 +170,29 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-73 tests covering the formation (rows per level, march direction, edge
+103 tests covering the formation (rows per level, march direction, edge
 reversal + descent, speed-up as the wave thins, side-margin containment),
-invasion game-over, alien-ship collision, touch-strip ship control (steer,
-stop-on-finger, clamping, zone boundaries), firing (auto-fire, cooldown,
-3-laser cap, despawn), per-tier kill scoring, bombs (drop cadence, concurrency
-cap, ship hits, invulnerability window, shoot-down), the saucer (crossing,
-despawn, bonus payout), power-ups (pickup, shield absorb, shield persistence,
-rapid-fire cooldown + expiry, triple-shot volley count + exact ±8° angles +
-expiry), the level-10 boss (spawn + HP, sine drift, aimed bombs,
-escort-doesn't-clear rule, kill-to-win payout, Auto Play targeting), level
-progression (clear bonus, advance, boss handoff at 10, game over on zero
-lives), the settings state machine (gear tap, toggles, back button,
-persistence across instances), high-score persistence, the Auto Play AI
-(autonomous fire, bomb dodging, power-up interception, saucer lead-aiming,
-wave completion), and the AI-Glasses integration (touchbar steer/fire from
-anywhere, strip-mode isolation, no gear on glasses, pure-black clear, settings
-row launch/inert/exit behaviour, phone gameplay freeze during a glasses
-session). Run on a connected device or emulator:
+invasion game-over (even through an active shield), alien-ship collision,
+touch-strip ship control (steer, stop-on-finger, clamping, zone boundaries),
+the huge-frame dt clamp, firing (auto-fire, cooldown, 3-laser cap, despawn),
+per-tier kill scoring, bombs (drop cadence, concurrency cap, ship hits,
+invulnerability window, shoot-down), the saucer (crossing, despawn, bonus
+payout, suppression during the boss fight), power-ups (pickup, shield absorb,
+shield persistence, rapid-fire cooldown + expiry, triple-shot volley count +
+exact ±8° angles + expiry, uncollected fall-through), the level-10 boss (spawn +
+HP, sine drift, aimed bombs, escort-doesn't-clear rule, kill-to-win payout, Auto
+Play targeting), level progression (level-scaled clear bonus, in-flight-bomb
+wipe on clear, level clamp at 10, boss handoff, game over on zero lives,
+end-screen grace tap + title-return cleanup), process-death session restore
+(bounds-checked resume of level/score/lives), the settings state machine (gear
+tap, toggles, back button, persistence across instances), high-score
+persistence (cross-instance disk merge, exact-duplicate skip, reload-from-disk
+handoff, zero-score guard), the Auto Play AI (autonomous fire, bomb dodging,
+power-up interception, saucer lead-aiming, wave completion), and the AI-Glasses
+integration (touchbar steer/fire from anywhere, strip-mode isolation, no gear on
+glasses, pure-black clear, settings row launch/inert/exit behaviour, phone
+gameplay freeze during a glasses session). Run on a connected device or
+emulator:
 
 ```bash
 # ARM device (default)
@@ -217,15 +222,8 @@ Three GitHub Actions jobs run on every push and pull request to `main`:
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs the 73 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Native Tests** | Runs the 103 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
 | **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators and captures an in-game screenshot via `UiAutomation`. The test asserts the activity is RESUMED **and** that the renderer logged `Swapchain ready`, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking preview legs on API 37.0 (`google_apis_ps16k`, 16 KB pages) across the swiftshader / lavapipe / auto GPU backends | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
-
-Known preview-image limitation: the API 37.0 `ps16k` CI emulators only expose a
-Vulkan device with the emulator's `-feature ... Vulkan` flag (already set in the
-workflow), and their SwiftShader-Vulkan stack currently presents the clear
-colour but rasterises no geometry — so those legs' screenshots show an empty
-game background. The same APK renders correctly on arm64 API 37 emulators and
-on API 34/36; upstream emulator issue, nothing to fix in the app.
 
 ## License
 
