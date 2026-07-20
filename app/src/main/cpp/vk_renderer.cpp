@@ -901,6 +901,14 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
     pi.pSwapchains = &swapchain_;
     pi.pImageIndices = &imageIndex;
     r = vkQueuePresentKHR(queue_, &pi);
+    if (r == VK_SUCCESS && !firstFramePresented_) {
+        // A frame has actually reached the screen — not just a created
+        // swapchain. The instrumented smoke test waits for this line before
+        // grabbing its screenshot, so slow software rasterizers get a real
+        // frame instead of the cleared surface.
+        firstFramePresented_ = true;
+        LOGI("First frame presented");
+    }
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) {
         destroySwapchain();
         createSwapchain();  // failure is retried at the top of the next frame

@@ -39,16 +39,21 @@ class SmokeTest {
         shell("logcat -c")
 
         ActivityScenario.launch(NativeActivity::class.java).use { scenario ->
-            // Poll for the first frame instead of a fixed sleep: the
-            // software-rasterized CI legs (swiftshader/lavapipe) can take
-            // well over any single guess.
+            // Poll for the first PRESENTED frame instead of a fixed sleep: the
+            // software-rasterized CI legs (swiftshader/lavapipe) can take well
+            // over any single guess. "Swapchain ready" only means the swapchain
+            // was created — it is logged before any frame is drawn — so the
+            // screenshot below waits for "First frame presented", which the
+            // renderer logs after the first successful vkQueuePresentKHR. That
+            // way a slow rasterizer is captured showing a real frame, not the
+            // cleared surface.
             // Note: a single filterspec — a second one for the same tag would
             // override the first (":I" already includes warnings and errors).
             val deadline = System.currentTimeMillis() + 60_000
             var log = ""
             while (System.currentTimeMillis() < deadline) {
                 log = shell("logcat -d -s SpaceInvaders:I")
-                if (log.contains("Swapchain ready")) break
+                if (log.contains("First frame presented")) break
                 Thread.sleep(500)
             }
 
@@ -61,12 +66,13 @@ class SmokeTest {
 
             // RESUMED alone doesn't prove pixels: the game survives a
             // Vulkan-less device without crashing (it just renders nothing).
-            // Assert the renderer actually brought a swapchain up, so a dead
-            // render path fails the test instead of silent black screenshots.
+            // Assert the renderer actually presented a frame (which implies the
+            // swapchain came up), so a dead render path fails the test instead
+            // of producing a silent black screenshot.
             assertTrue(
-                "Renderer never reached 'Swapchain ready' — Vulkan log was:\n" +
+                "Renderer never reached 'First frame presented' — Vulkan log was:\n" +
                     log.lines().takeLast(20).joinToString("\n"),
-                log.contains("Swapchain ready")
+                log.contains("First frame presented")
             )
 
             // Screenshot the verified foreground moment for CI: screencap runs
