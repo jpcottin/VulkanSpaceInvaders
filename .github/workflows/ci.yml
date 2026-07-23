@@ -357,6 +357,40 @@ jobs:
       - name: Run instrumented tests
         run: ./gradlew connectedAndroidTest --no-daemon
 
+      # Parity with the smoke job: the test captures a verified-swapchain
+      # screenshot to /data/local/tmp; pull it and a filtered logcat.
+      - name: Pull in-test screenshot and logcat
+        if: always()
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          export PATH="$SDK/platform-tools:$PATH"
+          adb pull /data/local/tmp/smoke.png screenshot.png || true
+          adb logcat -d SpaceInvaders:V AndroidRuntime:E *:S > logcat.txt || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-smoke-test-results
+          path: app/build/outputs/androidTest-results/
+          if-no-files-found: warn
+
+      - name: Upload screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-smoke-screenshot
+          path: screenshot.png
+          if-no-files-found: warn
+
+      - name: Upload logcat
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-smoke-logcat
+          path: logcat.txt
+          if-no-files-found: warn
+
       - name: Stop emulator
         if: always()
         run: android emulator stop "$DEVICE" || true
