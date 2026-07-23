@@ -80,7 +80,7 @@ jobs:
           api-level: ${{ matrix.api-level }}
           arch: x86_64
           profile: pixel_6
-          emulator-options: -no-window -gpu ${{ matrix.gpu }} -noaudio -no-boot-anim -verbose -debug-metrics -metrics-collection
+          emulator-options: -no-window -gpu ${{ matrix.gpu }} -noaudio -no-boot-anim -verbose -show-kernel -debug-metrics -metrics-collection
           disable-animations: true
           emulator-boot-timeout: 900
           script: ./gradlew runNativeTests -PtestAbi=x86_64 --no-daemon
@@ -111,7 +111,7 @@ jobs:
             cores: 4
             disk-size: 8192M
             experimental: true
-            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
           - api-level: '37.0'
             suffix: canary-lavapipe
             target: google_apis_ps16k
@@ -121,7 +121,7 @@ jobs:
             cores: 4
             disk-size: 8192M
             experimental: true
-            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
           - api-level: '37.0'
             suffix: canary-auto
             target: google_apis_ps16k
@@ -131,7 +131,7 @@ jobs:
             cores: 4
             disk-size: 8192M
             experimental: true
-            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
           - api-level: '37.1'
             suffix: canary-lavapipe
             target: google_apis_ps16k
@@ -141,7 +141,7 @@ jobs:
             cores: 4
             disk-size: 8192M
             experimental: true
-            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
           - api-level: '37.1'
             suffix: canary-auto
             target: google_apis_ps16k
@@ -151,7 +151,7 @@ jobs:
             cores: 4
             disk-size: 8192M
             experimental: true
-            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
 
     steps:
       - uses: actions/checkout@v6
@@ -202,7 +202,7 @@ jobs:
           ram-size: ${{ matrix.ram-size }}
           cores: ${{ matrix.cores || 2 }}
           disk-size: ${{ matrix.disk-size }}
-          emulator-options: -no-window -gpu ${{ matrix.gpu }} -noaudio -no-boot-anim -verbose -debug-metrics -metrics-collection ${{ matrix.extra-options || '' }}
+          emulator-options: -no-window -gpu ${{ matrix.gpu }} -noaudio -no-boot-anim -verbose -show-kernel -debug-metrics -metrics-collection ${{ matrix.extra-options || '' }}
           disable-animations: true
           emulator-boot-timeout: 900
           script: |
