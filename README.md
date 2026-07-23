@@ -1,5 +1,25 @@
 # Vulkan Space Invaders
 
+[![CI](https://github.com/jpcottin/VulkanSpaceInvaders/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jpcottin/VulkanSpaceInvaders/actions/workflows/ci.yml)
+
+<details>
+<summary><b>CI details</b> — native tests + smoke matrix, API 34 → 37.1, plus an Android CLI leg</summary>
+
+| Legs | Image | Emulator channel | GPU | Gating |
+|---|---|---|---|---|
+| Native tests: API 34, 36 | `default` x86_64 | stable | swiftshader / auto | ✅ blocking |
+| Smoke: API 34, 36 | `default` x86_64 | stable | swiftshader / auto | ✅ blocking |
+| Smoke: API 37.0 | `google_apis_ps16k` (16 KB page size) | stable | lavapipe | non-blocking |
+| Smoke: API 37.0 | `google_apis_ps16k` | canary (`--channel=3`) | lavapipe, auto | non-blocking |
+| Smoke: API 37.1 | `google_apis_ps16k` | canary | lavapipe, auto | non-blocking |
+| Android CLI experiment | `google_apis_ps16k` 37.0 | canary | emulator default | non-blocking |
+
+The Android CLI leg drives the whole flow with the [`android` CLI](https://d.android.com/tools/agents/android-cli) (`android sdk install --canary`, `android emulator create/start/stop`) instead of `sdkmanager`/`avdmanager` and the emulator-runner action.
+
+All emulator-runner legs use full diagnostics (`-verbose -show-kernel -debug-metrics -metrics-collection`) and a `cmdline-tools;latest` update so `avdmanager` writes a valid `target=android-37.x` (the runner's preinstalled version writes `android-0`, which the emulator clamps to API 3, disabling the Vulkan/GLDirectMem auto-enable the ps16k images need).
+
+</details>
+
 A 2D **Space Invaders-like** game for **Android**, rendered with **Vulkan**.
 
 Defend the bottom of the screen from marching waves of invaders across ten

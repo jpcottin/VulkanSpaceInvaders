@@ -237,3 +237,137 @@ jobs:
           name: smoke-logcat-api${{ matrix.api-level }}${{ matrix.suffix && format('-{0}', matrix.suffix) || '' }}
           path: logcat.txt
           if-no-files-found: warn
+
+  # Experiment: drive the whole emulator flow with the new Android CLI
+  # (https://d.android.com/tools/agents/android-cli) instead of
+  # sdkmanager/avdmanager and the emulator-runner action.
+  android-cli-experiment:
+    name: Android CLI experiment (API 37.0 canary emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: gradle
+
+      - name: Install NDK 29
+        run: |
+          echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+            "ndk;29.0.14206865" 2>&1 | tail -3
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install Android CLI
+        run: |
+          curl -fsSL https://dl.google.com/android/cli/latest/linux_x86_64/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Android CLI diagnostics
+        run: |
+          android --version
+          android info
+          android sdk list | head -40
+
+      - name: Install canary emulator and API 37.0 ps16k image with the CLI
+        run: |
+          android sdk install --canary emulator platform-tools system-images/android-37.0/google_apis_ps16k/x86_64
+          android sdk list | grep -iE "^  emulator|android-37" || true
+
+      # 'android emulator create' is profile-based with no way to pin an image (it
+      # picks google_apis_playstore, whose first-boot Play overlays steal window
+      # focus and break Espresso). An AVD is just ini files, so create the profile
+      # with the CLI and retarget it at the pinned image — no sdkmanager/avdmanager.
+      - name: Create AVD with the CLI and retarget it to API 37.0 ps16k
+        run: |
+          android emulator create medium_phone
+          DEVICE="$(android emulator list | head -n1)"
+          AVD_DIR="$HOME/.android/avd/$DEVICE.avd"
+          if [ -z "$DEVICE" ] || [ ! -d "$AVD_DIR" ]; then
+            echo "ERROR: created AVD not found (DEVICE='$DEVICE')"
+            ls -la "$HOME/.android/avd/" || true
+            exit 1
+          fi
+          echo "CLI created AVD: $DEVICE"
+          CFG="$AVD_DIR/config.ini"
+          # Replace-or-append so a key missing from the CLI-written config cannot
+          # silently keep its profile default.
+          set_ini() {
+            if grep -q "^$1=" "$CFG"; then sed -i "s#^$1=.*#$1=$2#" "$CFG"; else echo "$1=$2" >> "$CFG"; fi
+          }
+          sed -i 's/^target=.*/target=android-37.0/' "$HOME/.android/avd/$DEVICE.ini"
+          set_ini image.sysdir.1 'system-images/android-37.0/google_apis_ps16k/x86_64/'
+          set_ini tag.id google_apis
+          set_ini tag.display 'Google APIs'
+          set_ini PlayStore.enabled false
+          set_ini hw.ramSize 4096
+          set_ini hw.cpu.ncore 4
+          set_ini disk.dataPartition.size 8192M
+          # Optional plural tag keys, if the profile wrote them, must not keep
+          # claiming the playstore image.
+          if grep -q '^tag.ids=' "$CFG"; then sed -i 's/^tag.ids=.*/tag.ids=google_apis,page_size_16kb/' "$CFG"; fi
+          if grep -q '^tag.displaynames=' "$CFG"; then sed -i 's/^tag.displaynames=.*/tag.displaynames=Google APIs,16 KB Page Size/' "$CFG"; fi
+          echo "===== root ini ====="; cat "$HOME/.android/avd/$DEVICE.ini"
+          echo "===== config.ini ====="; cat "$CFG"
+          echo "DEVICE=$DEVICE" >> "$GITHUB_ENV"
+
+      # 'android emulator start' passes neither -noaudio nor -no-window, so the
+      # runner needs libpulse and an X display.
+      - name: Install emulator host dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libpulse0 xvfb
+          Xvfb :99 -screen 0 1280x800x24 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+
+      - name: Start emulator with the CLI
+        timeout-minutes: 15
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          export PATH="$SDK/platform-tools:$PATH"
+          echo "Starting AVD: $DEVICE"
+          # start returns 0 even if the emulator process dies; verify via adb.
+          android emulator start --cold "$DEVICE"
+          for _ in $(seq 1 30); do adb get-state >/dev/null 2>&1 && break; sleep 2; done
+          adb get-state >/dev/null 2>&1 || { echo "===== emulator.log ====="; cat "$HOME/.android/$DEVICE/emulator.log" 2>/dev/null || echo "(no emulator.log)"; exit 1; }
+          adb devices
+          adb shell getprop ro.build.version.sdk
+          adb shell getprop sys.boot_completed
+          # The CLI has no disable-animations equivalent (emulator-runner sets it);
+          # Espresso needs animations off.
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          adb logcat -v time > "${{ github.workspace }}/emulator_logcat.txt" &
+
+      - name: Dump emulator.log on failure
+        if: failure()
+        run: cat "$HOME/.android/$DEVICE/emulator.log" 2>/dev/null || echo "(no emulator.log)"
+
+      - name: Run instrumented tests
+        run: ./gradlew connectedAndroidTest --no-daemon
+
+      - name: Stop emulator
+        if: always()
+        run: android emulator stop "$DEVICE" || true
+
+      - name: Dump logcat on failure
+        if: failure()
+        run: tail -n 500 "${{ github.workspace }}/emulator_logcat.txt" 2>/dev/null || echo "no logcat captured"
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: instrumented-test-report-android-cli-experiment
+          path: app/build/reports/androidTests/
