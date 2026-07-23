@@ -101,35 +101,57 @@ jobs:
             gpu: swiftshader_indirect
           - api-level: '36'
             gpu: auto
-          # API 37.0 (16 KB page-size image) across three GPU backends.
-          # Needs the GLDirectMem feature; runs with 4 GB RAM / 4 cores.
+          # API 37.x (16 KB page-size images); 4 GB RAM / 4 cores. channel
+          # selects the emulator + image revision via sdkmanager --channel.
           - api-level: '37.0'
-            suffix: swiftshader
-            target: google_apis_ps16k
-            gpu: swiftshader_indirect
-            ram-size: 4096M
-            cores: 4
-            disk-size: 8192M
-            experimental: true
-            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel -feature GLDirectMem,HasSharedSlotsHostMemoryAllocator,Vulkan
-          - api-level: '37.0'
-            suffix: lavapipe
+            suffix: stable-lavapipe
             target: google_apis_ps16k
             gpu: lavapipe
             ram-size: 4096M
             cores: 4
             disk-size: 8192M
             experimental: true
-            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel -feature GLDirectMem,HasSharedSlotsHostMemoryAllocator,Vulkan
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel
           - api-level: '37.0'
-            suffix: auto
+            suffix: canary-lavapipe
             target: google_apis_ps16k
+            channel: canary
+            gpu: lavapipe
+            ram-size: 4096M
+            cores: 4
+            disk-size: 8192M
+            experimental: true
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel
+          - api-level: '37.0'
+            suffix: canary-auto
+            target: google_apis_ps16k
+            channel: canary
             gpu: auto
             ram-size: 4096M
             cores: 4
             disk-size: 8192M
             experimental: true
-            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel -feature GLDirectMem,HasSharedSlotsHostMemoryAllocator,Vulkan
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel
+          - api-level: '37.1'
+            suffix: canary-lavapipe
+            target: google_apis_ps16k
+            channel: canary
+            gpu: lavapipe
+            ram-size: 4096M
+            cores: 4
+            disk-size: 8192M
+            experimental: true
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel
+          - api-level: '37.1'
+            suffix: canary-auto
+            target: google_apis_ps16k
+            channel: canary
+            gpu: auto
+            ram-size: 4096M
+            cores: 4
+            disk-size: 8192M
+            experimental: true
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb -show-kernel
 
     steps:
       - uses: actions/checkout@v6
@@ -153,6 +175,21 @@ jobs:
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+
+      # The runner image ships an outdated avdmanager that writes target=android-0
+      # for minor-versioned packages (android-37.x); the emulator clamps that to
+      # API 3 and skips the Vulkan/GLDirectMem auto-enable, which previously had
+      # to be worked around with -feature GLDirectMem.
+      - name: Update SDK cmdline-tools
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --install "cmdline-tools;latest" > /dev/null
+          # sdkmanager won't overwrite the preinstalled dir; it installs to latest-2.
+          if [ -d "$SDK/cmdline-tools/latest-2" ]; then
+            rm -rf "$SDK/cmdline-tools/latest"
+            mv "$SDK/cmdline-tools/latest-2" "$SDK/cmdline-tools/latest"
+          fi
+          "$SDK/cmdline-tools/latest/bin/avdmanager" list device > /dev/null
 
       - name: Run instrumented smoke test and capture screenshot
         uses: reactivecircus/android-emulator-runner@v2
