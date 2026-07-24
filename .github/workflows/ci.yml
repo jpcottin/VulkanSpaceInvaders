@@ -735,31 +735,49 @@ jobs:
               adb shell wm dismiss-keyguard || true
             fi
 
+            echo "RUN $N app pid after boot/restore (pre am-start): $(adb shell pidof "$PKG" 2>/dev/null | tr -d '\r' || echo none)"
             # Start (or re-foreground, after a restored snapshot) the app; the
             # TITLE screen needs one tap to start a round — auto-play only
             # pilots during PLAYING.
             adb shell am start -n "$PKG/android.app.NativeActivity" || true
             # Input to an unfocused window is dropped, and cold Vulkan init can
-            # take a few seconds: wait for the activity to hold window focus
-            # before tapping past the TITLE screen.
+            # take a few seconds: wait for the activity to hold window focus,
+            # then tap with spacing (a 1s-apart pair kept being dropped on the
+            # first cold launch).
             for _ in $(seq 1 30); do
               adb shell dumpsys window 2>/dev/null | grep -qi "ocus.*vulkanspaceinvaders" && break
               sleep 1
             done
-            sleep 2
-            adb shell input tap 540 1500 || true
-            sleep 1
-            adb shell input tap 540 1500 || true
+            sleep 3
+            for _ in 1 2 3 4; do
+              adb shell input tap 540 1500 || true
+              sleep 2
+            done
             sleep 5
             adb exec-out screencap -p > "${{ github.workspace }}/screenshots/run$N.png" || true
             echo "RUN $N screenshot: $(stat -c %s "${{ github.workspace }}/screenshots/run$N.png" 2>/dev/null || echo 0) bytes"
             sleep 1
-            echo "RUN $N: killing emulator gracefully (snapshot save expected)"
+            echo "RUN $N app pid before kill: $(adb shell pidof "$PKG" 2>/dev/null | tr -d '\r' || echo none)"
+            adb logcat -d -t 500 > "${{ github.workspace }}/logcat_run$N.txt" 2>/dev/null || true
+            echo "RUN $N: requesting shutdown via adb emu kill"
             adb emu kill || true
-            # Snapshot save is a RAM dump and outlives the launcher: qemu keeps
-            # the qcow2 write locks until it finishes, so wait for EVERY process
-            # from the preview package (launcher, qemu, netsimd, crashpad) to
-            # exit before relaunching.
+            ADB_KILL_WORKED=0
+            for _ in $(seq 1 15); do
+              kill -0 "$EMU_PID" 2>/dev/null || { ADB_KILL_WORKED=1; break; }
+              sleep 1
+            done
+            if [ "$ADB_KILL_WORKED" = "1" ]; then
+              echo "RUN $N: adb emu kill shut the emulator down"
+            else
+              # Observed on emulators;latest: adb emu kill is a no-op; SIGTERM
+              # to the launcher shuts down gracefully AND saves the snapshot
+              # (~7.5s).
+              echo "RUN $N: adb emu kill had no effect after 15s; sending SIGTERM to launcher pid $EMU_PID"
+              kill "$EMU_PID" 2>/dev/null || true
+            fi
+            SHUTDOWN_T0=$(date +%s)
+            # qemu holds the qcow2 write locks until the snapshot save finishes;
+            # wait for every preview-package process before relaunching.
             for _ in $(seq 1 120); do
               pgrep -f "emulators/latest" >/dev/null 2>&1 || break
               sleep 1
@@ -770,6 +788,11 @@ jobs:
               pkill -f "emulators/latest" || true
               sleep 5
             fi
+            echo "RUN $N: all emulator processes gone $(( $(date +%s) - SHUTDOWN_T0 ))s after the effective signal"
+            echo "===== RUN $N snapshot dir ====="
+            ls -la "$HOME/.android/avd/test.avd/snapshots/default_boot/" 2>/dev/null || echo "(no snapshot dir)"
+            du -sh "$HOME/.android/avd/test.avd/snapshots/default_boot" 2>/dev/null || true
+            cp "$HOME/.android/avd/test.avd/snapshots/default_boot/screenshot.png" "${{ github.workspace }}/screenshots/run${N}-save.png" 2>/dev/null && echo "saved-moment screenshot captured as run${N}-save.png" || echo "(no screenshot.png in snapshot dir)"
             sleep 3
             echo "===== RUN $N snapshot-related emulator log lines ====="
             grep -inE "snapshot|quickboot" "${{ github.workspace }}/emulator_run$N.txt" | tail -15 || echo "(none)"
@@ -792,5 +815,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: preview-multirun-emulator-logs
-          path: emulator_run*.txt
+          path: |
+            emulator_run*.txt
+            logcat_run*.txt
           if-no-files-found: warn
