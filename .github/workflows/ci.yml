@@ -726,6 +726,8 @@ jobs:
             T_RESUME=$(date +%s)
 
             if [ "$N" = "1" ]; then
+              echo "WARNING: setting 'adb shell settings put global hide_error_dialogs 1' — guest crash/ANR dialogs are suppressed for this job (a 'Digital Wellbeing keeps stopping' dialog blocked all input in a previous run and was preserved by the snapshot)"
+              adb shell settings put global hide_error_dialogs 1 || true
               adb install -r app/build/outputs/apk/debug/app-debug.apk
               # Enable auto-play BEFORE first app start: the game loads
               # <files>/settings.bin at startup (magic "SETT" LE, soundOn=0,
@@ -764,6 +766,15 @@ jobs:
             adb logcat -d -t 500 > "${{ github.workspace }}/logcat_run$N.txt" 2>/dev/null || true
             adb exec-out screencap -p > "${{ github.workspace }}/screenshots/run$N.png" || true
             echo "RUN $N exit screenshot: $(stat -c %s "${{ github.workspace }}/screenshots/run$N.png" 2>/dev/null || echo 0) bytes"
+            # Display-liveness probe: a second capture 2s later must differ
+            # (starfield/animations) or the render pipeline is frozen.
+            sleep 2
+            adb exec-out screencap -p > /tmp/liveness$N.png || true
+            if cmp -s "${{ github.workspace }}/screenshots/run$N.png" /tmp/liveness$N.png; then
+              echo "RUN $N display: FROZEN (two captures 2s apart are byte-identical)"
+            else
+              echo "RUN $N display: LIVE"
+            fi
             sleep 1
             if [ "$N" = "1" ]; then
               # Documented once: adb emu kill is a no-op on emulators;latest
