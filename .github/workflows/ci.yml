@@ -739,7 +739,16 @@ jobs:
             # TITLE screen needs one tap to start a round — auto-play only
             # pilots during PLAYING.
             adb shell am start -n "$PKG/android.app.NativeActivity" || true
-            sleep 3
+            # Input to an unfocused window is dropped, and cold Vulkan init can
+            # take a few seconds: wait for the activity to hold window focus
+            # before tapping past the TITLE screen.
+            for _ in $(seq 1 30); do
+              adb shell dumpsys window 2>/dev/null | grep -qi "ocus.*vulkanspaceinvaders" && break
+              sleep 1
+            done
+            sleep 2
+            adb shell input tap 540 1500 || true
+            sleep 1
             adb shell input tap 540 1500 || true
             sleep 5
             adb exec-out screencap -p > "${{ github.workspace }}/screenshots/run$N.png" || true
