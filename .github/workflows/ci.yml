@@ -747,11 +747,20 @@ jobs:
             sleep 1
             echo "RUN $N: killing emulator gracefully (snapshot save expected)"
             adb emu kill || true
-            for _ in $(seq 1 30); do
-              kill -0 "$EMU_PID" 2>/dev/null || break
+            # Snapshot save is a RAM dump and outlives the launcher: qemu keeps
+            # the qcow2 write locks until it finishes, so wait for EVERY process
+            # from the preview package (launcher, qemu, netsimd, crashpad) to
+            # exit before relaunching.
+            for _ in $(seq 1 120); do
+              pgrep -f "emulators/latest" >/dev/null 2>&1 || break
               sleep 1
             done
-            kill -0 "$EMU_PID" 2>/dev/null && { echo "WARNING: emulator still alive after 30s; killing"; kill "$EMU_PID" || true; }
+            if pgrep -f "emulators/latest" >/dev/null 2>&1; then
+              echo "WARNING: preview emulator processes still alive after 120s:"
+              pgrep -af "emulators/latest" || true
+              pkill -f "emulators/latest" || true
+              sleep 5
+            fi
             sleep 3
             echo "===== RUN $N snapshot-related emulator log lines ====="
             grep -inE "snapshot|quickboot" "${{ github.workspace }}/emulator_run$N.txt" | tail -15 || echo "(none)"
