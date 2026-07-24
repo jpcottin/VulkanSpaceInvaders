@@ -728,8 +728,9 @@ jobs:
               adb install -r app/build/outputs/apk/debug/app-debug.apk
               # Enable auto-play BEFORE first app start: the game loads
               # <files>/settings.bin at startup (magic "SETT" LE, soundOn=0,
-              # autoPlay=1).
-              adb shell run-as "$PKG" sh -c 'mkdir -p files && printf "\124\124\105\123\000\000\000\000\001\000\000\000" > files/settings.bin'
+              # autoPlay=1). Base64 avoids adb shell quoting of binary escapes.
+              adb shell "run-as $PKG sh -c 'mkdir -p files; echo VFRFUwAAAAABAAAA | base64 -d > files/settings.bin'"
+              adb shell "run-as $PKG ls -l files/settings.bin"
               adb shell input keyevent KEYCODE_WAKEUP || true
               adb shell wm dismiss-keyguard || true
             fi
