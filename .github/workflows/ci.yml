@@ -595,3 +595,249 @@ jobs:
           name: preview-smoke-logcat
           path: logcat.txt
           if-no-files-found: warn
+
+  # Experiment: snapshot save/restore of a live Vulkan game on the preview
+  # emulator. Three boot cycles WITHOUT -no-snapshot: each plays ~5s in
+  # auto-play, screenshots, then kills gracefully (adb emu kill) so the
+  # emulator saves a snapshot. If restore preserves the running app, the three
+  # screenshots show progressively later game stages.
+  emulator-preview-multirun:
+    name: Emulator Preview experiment multi-run (emulators/latest, API 37.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: gradle
+
+      - name: Install NDK 29
+        run: |
+          set -o pipefail  # a failed sdkmanager must fail the step, not tail
+          echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+            "ndk;29.0.14206865" 2>&1 | tail -3
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      # The runner image ships an outdated avdmanager that writes target=android-0
+      # for minor-versioned packages (android-37.x); the emulator clamps that to
+      # API 3 and skips the Vulkan/GLDirectMem auto-enable the ps16k images need.
+      - name: Update SDK cmdline-tools
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --install "cmdline-tools;latest" > /dev/null
+          # sdkmanager won't overwrite the preinstalled dir; it installs to latest-2.
+          if [ -d "$SDK/cmdline-tools/latest-2" ]; then
+            rm -rf "$SDK/cmdline-tools/latest"
+            mv "$SDK/cmdline-tools/latest-2" "$SDK/cmdline-tools/latest"
+          fi
+          "$SDK/cmdline-tools/latest/bin/avdmanager" list device > /dev/null
+
+      # The AVD must be created BEFORE emulators;latest is installed (its
+      # metadata makes avdmanager create silently no-op).
+      - name: Install API 37.0 ps16k image and create AVD
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --channel=3 --install 'system-images;android-37.0;google_apis_ps16k;x86_64' platform-tools > /dev/null
+          echo no | "$SDK/cmdline-tools/latest/bin/avdmanager" create avd --force -n test --abi 'google_apis_ps16k/x86_64' --device 'pixel_6' --package 'system-images;android-37.0;google_apis_ps16k;x86_64' 2>&1 || echo "avdmanager exit code: $?"
+          if [ ! -d "$HOME/.android/avd/test.avd" ]; then
+            echo "avdmanager produced nothing; writing the AVD ini files by hand"
+            mkdir -p "$HOME/.android/avd/test.avd"
+            printf 'avd.ini.encoding=UTF-8\npath=%s/.android/avd/test.avd\npath.rel=avd/test.avd\ntarget=android-37.0\n' "$HOME" > "$HOME/.android/avd/test.ini"
+            cat > "$HOME/.android/avd/test.avd/config.ini" << 'CFG'
+          AvdId=test
+          avd.ini.displayname=test
+          avd.ini.encoding=UTF-8
+          abi.type=x86_64
+          hw.cpu.arch=x86_64
+          image.sysdir.1=system-images/android-37.0/google_apis_ps16k/x86_64/
+          tag.id=google_apis
+          tag.display=Google APIs
+          PlayStore.enabled=no
+          hw.lcd.density=420
+          hw.lcd.width=1080
+          hw.lcd.height=2400
+          hw.keyboard=yes
+          hw.gpu.enabled=yes
+          hw.gpu.mode=auto
+          disk.dataPartition.size=8192M
+          hw.ramSize=4096
+          hw.cpu.ncore=4
+          CFG
+            sed -i 's/^          //' "$HOME/.android/avd/test.avd/config.ini"
+          fi
+          test -d "$HOME/.android/avd/test.avd" || { echo "ERROR: AVD not created"; exit 1; }
+          grep -q '^hw.ramSize=' "$HOME/.android/avd/test.avd/config.ini" || printf 'hw.ramSize=4096\nhw.cpu.ncore=4\ndisk.dataPartition.size=8192M\n' >> "$HOME/.android/avd/test.avd/config.ini"
+
+      - name: Install preview emulator
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --channel=3 --install 'emulators;latest' > /dev/null
+          "$SDK/emulators/latest/emulator" -version | head -8 || true
+
+      # The preview package's qemu links libpulse.so.0 at load time.
+      - name: Install emulator host dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libpulse0
+
+      - name: Snapshot multi-run cycle
+        timeout-minutes: 25
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          export ANDROID_HOME="$SDK" ANDROID_SDK_ROOT="$SDK"
+          export PATH="$SDK/platform-tools:$PATH"
+          PKG=com.jpcottin.vulkanspaceinvaders
+          mkdir -p "${{ github.workspace }}/screenshots"
+
+          boot_and_play() {  # $1 = run number
+            N="$1"
+            echo "================ RUN $N: launching emulator (snapshots enabled) ================"
+            # No -no-snapshot: load the snapshot if present, save on exit.
+            "$SDK/emulators/latest/emulator" @test -no-window -gpu auto -noaudio -no-boot-anim -camera-back none -memory 4096 -verbose -show-kernel -debug-metrics -metrics-collection > "${{ github.workspace }}/emulator_run$N.txt" 2>&1 &
+            EMU_PID=$!
+            tail -F "${{ github.workspace }}/emulator_run$N.txt" &
+            TAIL_PID=$!
+            for _ in $(seq 1 36); do
+              kill -0 "$EMU_PID" 2>/dev/null || { echo "ERROR: emulator process exited early (run $N)"; exit 1; }
+              adb get-state >/dev/null 2>&1 && break
+              sleep 5
+            done
+            adb get-state >/dev/null 2>&1 || { echo "ERROR: no device after 180s (run $N)"; exit 1; }
+            for _ in $(seq 1 48); do
+              [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] && break
+              sleep 10
+            done
+            [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] || { echo "===== boot timeout (run $N) ====="; exit 1; }
+            kill "$TAIL_PID" 2>/dev/null || true
+            T_RESUME=$(date +%s)
+
+            if [ "$N" = "1" ]; then
+              echo "WARNING: setting 'adb shell settings put global hide_error_dialogs 1' — guest crash/ANR dialogs are suppressed for this job (a 'Digital Wellbeing keeps stopping' dialog blocked all input in a previous run and was preserved by the snapshot)"
+              adb shell settings put global hide_error_dialogs 1 || true
+              adb install -r app/build/outputs/apk/debug/app-debug.apk
+              # Enable auto-play BEFORE first app start: the game loads
+              # <files>/settings.bin at startup (magic "SETT" LE, soundOn=0,
+              # autoPlay=1). Base64 avoids adb shell quoting of binary escapes.
+              adb shell "run-as $PKG sh -c 'mkdir -p files; echo VFRFUwAAAAABAAAA | base64 -d > files/settings.bin'"
+              adb shell "run-as $PKG ls -l files/settings.bin"
+              adb shell input keyevent KEYCODE_WAKEUP || true
+              adb shell wm dismiss-keyguard || true
+            else
+              # Entry screenshot: the restored frame, before any input — should
+              # match the previous run's exit screenshot (~1s before its
+              # snapshot).
+              adb exec-out screencap -p > "${{ github.workspace }}/screenshots/run$N-entry.png" || true
+              echo "RUN $N entry screenshot: $(stat -c %s "${{ github.workspace }}/screenshots/run$N-entry.png" 2>/dev/null || echo 0) bytes"
+            fi
+
+            echo "RUN $N app pid after boot/restore (pre am-start): $(adb shell pidof "$PKG" 2>/dev/null | tr -d '\r' || echo none)"
+            # Start (or re-foreground, after a restored snapshot) the app; the
+            # TITLE screen needs one tap to start a round — auto-play only
+            # pilots during PLAYING.
+            adb shell am start -n "$PKG/android.app.NativeActivity" || true
+            for _ in $(seq 1 30); do
+              adb shell dumpsys window 2>/dev/null | grep -qi "ocus.*vulkanspaceinvaders" && break
+              sleep 1
+            done
+            sleep 3
+            T_FIRST_TAP=$(date +%s)
+            for _ in 1 2 3 4; do
+              adb shell input tap 540 1500 || true
+              sleep 2
+            done
+            sleep 5
+            # Diagnostics BEFORE the exit screenshot so the picture stays ~1s
+            # from the snapshot point.
+            echo "RUN $N app pid before kill: $(adb shell pidof "$PKG" 2>/dev/null | tr -d '\r' || echo none)"
+            adb logcat -d -t 500 > "${{ github.workspace }}/logcat_run$N.txt" 2>/dev/null || true
+            adb exec-out screencap -p > "${{ github.workspace }}/screenshots/run$N.png" || true
+            echo "RUN $N exit screenshot: $(stat -c %s "${{ github.workspace }}/screenshots/run$N.png" 2>/dev/null || echo 0) bytes"
+            # Display-liveness probe: a second capture 2s later must differ
+            # (starfield/animations) or the render pipeline is frozen.
+            sleep 2
+            adb exec-out screencap -p > /tmp/liveness$N.png || true
+            if cmp -s "${{ github.workspace }}/screenshots/run$N.png" /tmp/liveness$N.png; then
+              echo "RUN $N display: FROZEN (two captures 2s apart are byte-identical)"
+            else
+              echo "RUN $N display: LIVE"
+            fi
+            sleep 1
+            if [ "$N" = "1" ]; then
+              # Documented once: adb emu kill is a no-op on emulators;latest
+              # (run 1 only, to keep later exits ~1s after their screenshot).
+              echo "RUN $N: requesting shutdown via adb emu kill"
+              adb emu kill || true
+              for _ in $(seq 1 15); do
+                kill -0 "$EMU_PID" 2>/dev/null || break
+                sleep 1
+              done
+            fi
+            T_KILL=$(date +%s)
+            if kill -0 "$EMU_PID" 2>/dev/null; then
+              echo "RUN $N: sending SIGTERM to launcher pid $EMU_PID (graceful, saves the snapshot)"
+              kill "$EMU_PID" 2>/dev/null || true
+            else
+              echo "RUN $N: emulator already down"
+            fi
+            if [ "$N" = "1" ]; then
+              echo "RUN $N played ~$(( T_KILL - T_FIRST_TAP ))s (first tap -> kill)"
+            else
+              echo "RUN $N played ~$(( T_KILL - T_RESUME ))s (resume -> kill)"
+            fi
+            # qemu holds the qcow2 write locks until the snapshot save finishes;
+            # wait for every preview-package process before relaunching.
+            for _ in $(seq 1 120); do
+              pgrep -f "emulators/latest" >/dev/null 2>&1 || break
+              sleep 1
+            done
+            if pgrep -f "emulators/latest" >/dev/null 2>&1; then
+              echo "WARNING: preview emulator processes still alive after 120s:"
+              pgrep -af "emulators/latest" || true
+              pkill -f "emulators/latest" || true
+              sleep 5
+            fi
+            echo "RUN $N: all emulator processes gone $(( $(date +%s) - T_KILL ))s after the kill request"
+            echo "===== RUN $N snapshot dir ====="
+            ls -la "$HOME/.android/avd/test.avd/snapshots/default_boot/" 2>/dev/null || echo "(no snapshot dir)"
+            du -sh "$HOME/.android/avd/test.avd/snapshots/default_boot" 2>/dev/null || true
+            sleep 3
+            echo "===== RUN $N snapshot-related emulator log lines ====="
+            grep -inE "snapshot|quickboot" "${{ github.workspace }}/emulator_run$N.txt" | tail -15 || echo "(none)"
+          }
+
+          boot_and_play 1
+          boot_and_play 2
+          boot_and_play 3
+          boot_and_play 4
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-multirun-screenshots
+          path: screenshots/
+          if-no-files-found: warn
+
+      - name: Upload emulator logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-multirun-emulator-logs
+          path: |
+            emulator_run*.txt
+            logcat_run*.txt
+          if-no-files-found: warn
