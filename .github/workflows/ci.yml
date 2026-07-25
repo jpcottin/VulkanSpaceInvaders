@@ -703,12 +703,37 @@ jobs:
           PKG=com.jpcottin.vulkanspaceinvaders
           mkdir -p "${{ github.workspace }}/screenshots"
 
+          # The emulator console starts unauthenticated and then exposes only
+          # help/ping/auth/quit/avd -- 'kill' is not in that set, which is why
+          # 'adb emu kill' used to answer "KO: unknown command" and act as a
+          # no-op. The preview emulator READS $HOME/.emulator_console_auth_token
+          # but never creates it, and a fresh runner has no such file. Creating
+          # it before the first boot (both the emulator and adb read this same
+          # file, so the value is arbitrary) unlocks the full command set and
+          # makes 'adb emu kill' a real graceful shutdown: the emulator exits in
+          # ~2s having saved its snapshot, instead of being SIGTERMed minutes
+          # later while the game keeps playing.
+          printf 'ciConsoleTokenForHeadlessRuns' > "$HOME/.emulator_console_auth_token"
+          chmod 600 "$HOME/.emulator_console_auth_token"
+
+          SELF_PGID="$(ps -o pgid= -p $$ | tr -d ' ')"
+
           boot_and_play() {  # $1 = run number
             N="$1"
             echo "================ RUN $N: launching emulator (snapshots enabled) ================"
             # No -no-snapshot: load the snapshot if present, save on exit.
-            "$SDK/emulators/latest/emulator" @test -no-window -gpu auto -noaudio -no-boot-anim -camera-back none -memory 4096 -verbose -show-kernel -debug-metrics -metrics-collection > "${{ github.workspace }}/emulator_run$N.txt" 2>&1 &
+            # setsid puts the emulator and its children (qemu, netsimd, crashpad)
+            # in their own process group, so the shutdown fallback below can be
+            # scoped to exactly this emulator instead of pkill-ing every process
+            # whose command line happens to contain "emulators/latest".
+            setsid "$SDK/emulators/latest/emulator" @test -no-window -gpu auto -noaudio -no-boot-anim -camera-back none -memory 4096 -verbose -show-kernel -debug-metrics -metrics-collection > "${{ github.workspace }}/emulator_run$N.txt" 2>&1 &
             EMU_PID=$!
+            EMU_PGID="$(ps -o pgid= -p "$EMU_PID" 2>/dev/null | tr -d ' ')"
+            # Never group-kill our own process group (would take out this step).
+            if [ -z "$EMU_PGID" ] || [ "$EMU_PGID" = "$SELF_PGID" ]; then
+              echo "WARNING: could not isolate a process group for the emulator; falling back to single-pid shutdown"
+              EMU_PGID=""
+            fi
             tail -F "${{ github.workspace }}/emulator_run$N.txt" &
             TAIL_PID=$!
             for _ in $(seq 1 36); do
@@ -738,8 +763,8 @@ jobs:
               adb shell wm dismiss-keyguard || true
             else
               # Entry screenshot: the restored frame, before any input — should
-              # match the previous run's exit screenshot (~1s before its
-              # snapshot).
+              # closely match the previous run's exit screenshot, which is now
+              # taken ~1s before that run's graceful shutdown.
               adb exec-out screencap -p > "${{ github.workspace }}/screenshots/run$N-entry.png" || true
               echo "RUN $N entry screenshot: $(stat -c %s "${{ github.workspace }}/screenshots/run$N-entry.png" 2>/dev/null || echo 0) bytes"
             fi
@@ -760,38 +785,46 @@ jobs:
               sleep 2
             done
             sleep 5
-            # Diagnostics BEFORE the exit screenshot so the picture stays ~1s
-            # from the snapshot point.
+            # Diagnostics and the liveness probe run BEFORE the exit screenshot,
+            # so that screenshot is the last thing captured and sits ~1s from the
+            # freeze. (It used to come first, leaving 15-20s of auto-play between
+            # the picture and the snapshot -- which is why runN-entry never
+            # matched run(N-1)'s exit shot.)
             echo "RUN $N app pid before kill: $(adb shell pidof "$PKG" 2>/dev/null | tr -d '\r' || echo none)"
             adb logcat -d -t 500 > "${{ github.workspace }}/logcat_run$N.txt" 2>/dev/null || true
-            adb exec-out screencap -p > "${{ github.workspace }}/screenshots/run$N.png" || true
-            echo "RUN $N exit screenshot: $(stat -c %s "${{ github.workspace }}/screenshots/run$N.png" 2>/dev/null || echo 0) bytes"
-            # Display-liveness probe: a second capture 2s later must differ
+            # Display-liveness probe: two captures 2s apart must differ
             # (starfield/animations) or the render pipeline is frozen.
+            adb exec-out screencap -p > /tmp/liveness$N-a.png || true
             sleep 2
-            adb exec-out screencap -p > /tmp/liveness$N.png || true
-            if cmp -s "${{ github.workspace }}/screenshots/run$N.png" /tmp/liveness$N.png; then
+            adb exec-out screencap -p > /tmp/liveness$N-b.png || true
+            if cmp -s /tmp/liveness$N-a.png /tmp/liveness$N-b.png; then
               echo "RUN $N display: FROZEN (two captures 2s apart are byte-identical)"
             else
               echo "RUN $N display: LIVE"
             fi
-            sleep 1
-            if [ "$N" = "1" ]; then
-              # Documented once: adb emu kill is a no-op on emulators;latest
-              # (run 1 only, to keep later exits ~1s after their screenshot).
-              echo "RUN $N: requesting shutdown via adb emu kill"
-              adb emu kill || true
-              for _ in $(seq 1 15); do
-                kill -0 "$EMU_PID" 2>/dev/null || break
-                sleep 1
-              done
-            fi
+            # Exit screenshot last: this is the frame the next run's entry
+            # screenshot should match.
+            adb exec-out screencap -p > "${{ github.workspace }}/screenshots/run$N.png" || true
+            echo "RUN $N exit screenshot: $(stat -c %s "${{ github.workspace }}/screenshots/run$N.png" 2>/dev/null || echo 0) bytes"
+
             T_KILL=$(date +%s)
+            # With an authenticated console this is a real graceful shutdown:
+            # the emulator saves its snapshot and exits within a couple of
+            # seconds. The group kill below is only a safety net.
+            echo "RUN $N: requesting shutdown via adb emu kill"
+            adb emu kill || true
+            for _ in $(seq 1 90); do
+              kill -0 "$EMU_PID" 2>/dev/null || break
+              sleep 1
+            done
             if kill -0 "$EMU_PID" 2>/dev/null; then
-              echo "RUN $N: sending SIGTERM to launcher pid $EMU_PID (graceful, saves the snapshot)"
-              kill "$EMU_PID" 2>/dev/null || true
-            else
-              echo "RUN $N: emulator already down"
+              echo "WARNING: emulator still up 90s after 'adb emu kill'; terminating it"
+              if [ -n "$EMU_PGID" ]; then
+                kill -TERM -- "-$EMU_PGID" 2>/dev/null || true
+              else
+                kill "$EMU_PID" 2>/dev/null || true
+              fi
+              sleep 10
             fi
             if [ "$N" = "1" ]; then
               echo "RUN $N played ~$(( T_KILL - T_FIRST_TAP ))s (first tap -> kill)"
@@ -799,21 +832,31 @@ jobs:
               echo "RUN $N played ~$(( T_KILL - T_RESUME ))s (resume -> kill)"
             fi
             # qemu holds the qcow2 write locks until the snapshot save finishes;
-            # wait for every preview-package process before relaunching.
-            for _ in $(seq 1 120); do
-              pgrep -f "emulators/latest" >/dev/null 2>&1 || break
-              sleep 1
-            done
-            if pgrep -f "emulators/latest" >/dev/null 2>&1; then
-              echo "WARNING: preview emulator processes still alive after 120s:"
-              pgrep -af "emulators/latest" || true
-              pkill -f "emulators/latest" || true
-              sleep 5
+            # wait for this emulator's whole process group before relaunching.
+            if [ -n "$EMU_PGID" ]; then
+              for _ in $(seq 1 120); do
+                kill -0 -- "-$EMU_PGID" 2>/dev/null || break
+                sleep 1
+              done
+              if kill -0 -- "-$EMU_PGID" 2>/dev/null; then
+                echo "WARNING: emulator process group $EMU_PGID still alive after 120s:"
+                ps -o pid=,cmd= -g "$EMU_PGID" 2>/dev/null || true
+                kill -KILL -- "-$EMU_PGID" 2>/dev/null || true
+                sleep 5
+              fi
             fi
             echo "RUN $N: all emulator processes gone $(( $(date +%s) - T_KILL ))s after the kill request"
-            echo "===== RUN $N snapshot dir ====="
-            ls -la "$HOME/.android/avd/test.avd/snapshots/default_boot/" 2>/dev/null || echo "(no snapshot dir)"
-            du -sh "$HOME/.android/avd/test.avd/snapshots/default_boot" 2>/dev/null || true
+            # The RAM/device state lives INSIDE the qcow2 overlays (-savevm
+            # default_boot); snapshots/default_boot only ever holds a 1-byte
+            # version.txt, so listing it proved nothing.
+            echo "===== RUN $N qcow2 snapshot table ====="
+            # The package's qemu-img has a broken RUNPATH (it points at Bazel
+            # build dirs that are not shipped), so its libs must be given
+            # explicitly or it fails on libgmodule_shared.so.
+            LD_LIBRARY_PATH="$SDK/emulators/latest/lib64" \
+              "$SDK/emulators/latest/bin/qemu-img" snapshot -l "$HOME/.android/avd/test.avd/userdata-qemu.img.qcow2" 2>&1 || echo "(qemu-img snapshot -l failed)"
+            echo "===== RUN $N GPU renderer save state ====="
+            du -sh "$HOME/.android/avd/test.avd/renderersave" 2>/dev/null || echo "(no renderersave dir)"
             sleep 3
             echo "===== RUN $N snapshot-related emulator log lines ====="
             grep -inE "snapshot|quickboot" "${{ github.workspace }}/emulator_run$N.txt" | tail -15 || echo "(none)"
