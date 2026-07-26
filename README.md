@@ -238,13 +238,44 @@ screenshot:
 
 ## CI/CD
 
-Three GitHub Actions jobs run on every push and pull request to `main`:
+GitHub Actions runs on every push and pull request to `main`. The first three
+jobs gate merges. The last three explore newer Android emulator tooling and are
+marked `continue-on-error`, so a preview package that moves underneath us
+reports its findings without ever blocking a PR.
 
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
 | **Native Tests** | Runs the 103 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
-| **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators and captures an in-game screenshot via `UiAutomation`. The test asserts the activity is RESUMED **and** that the renderer logged `Swapchain ready`, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking preview legs on API 37.0 (`google_apis_ps16k`, 16 KB pages) across the swiftshader / lavapipe / auto GPU backends | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
+| **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators and captures an in-game screenshot via `UiAutomation`. The test asserts the activity is RESUMED **and** that the renderer logged `Swapchain ready`, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking legs on API 37.0 and 37.1 (`google_apis_ps16k`, 16 KB pages) across the lavapipe and auto GPU backends, from both the stable and canary channels | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
+| **Android CLI experiment** | Drives the same instrumented test through the `android` CLI — SDK install, AVD creation, boot and teardown — instead of `sdkmanager`/`avdmanager` plus the emulator-runner action | `cli-smoke-*` |
+| **Emulator Preview** | Boots the Android Emulator Preview package (`emulators;latest`, which installs alongside the stable emulator under `emulators/latest/`) and runs the instrumented test against it | `preview-smoke-*` |
+| **Emulator Preview multi-run** | Four boot cycles against the same AVD with quickboot snapshots enabled: each cycle plays the game briefly, screenshots it, then shuts down so the emulator saves its snapshot. Checks whether a live Vulkan app survives snapshot save/restore — it does: the app keeps its pid and the game continues across cycles | `preview-multirun-screenshots`, `preview-multirun-emulator-logs` |
+
+The preview jobs share their setup through the composite action in
+`.github/actions/preview-emulator`, which installs the system image, creates
+the AVD, installs the preview emulator and its host dependencies.
+
+### Replaying the Emulator Preview job locally
+
+Pushing to see what a preview emulator does is a slow way to iterate, so the
+multi-run job can be replayed on a local machine in a few minutes:
+
+```bash
+scripts/replay-preview-multirun.sh            # 4 cycles, throwaway AVD, cleaned up after
+scripts/replay-preview-multirun.sh -n 2 -k    # 2 cycles, keep the AVD for inspection
+scripts/replay-preview-multirun.sh -h         # options
+```
+
+It needs `emulators;latest`, the API 37.0 `google_apis_ps16k` system image and
+KVM. Every `adb` call is pinned to the emulator it launches and shutdown is
+scoped to that emulator's process group, so it is safe to run while other
+devices or emulators are attached.
+
+The script writes `~/.emulator_console_auth_token` if you do not already have
+one. The emulator console authenticates against that file before it offers its
+full command set, including `kill` — which is how both the script and CI ask
+the emulator to shut down cleanly so that it writes its quickboot snapshot.
 
 ## License
 
