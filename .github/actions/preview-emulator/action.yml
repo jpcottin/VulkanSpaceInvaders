@@ -42,10 +42,19 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Resolve SDK path
+    - name: Resolve SDK path and cache key
       id: sdk
       shell: bash
-      run: echo "path=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}" >> "$GITHUB_OUTPUT"
+      run: |
+        echo "path=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}" >> "$GITHUB_OUTPUT"
+        # actions/cache never re-saves on an exact key hit, so a fixed key would
+        # freeze the image at whatever revision was current when it was first
+        # cached: sdkmanager would re-fetch each new revision on every run and
+        # the cache would never catch up, while CI quietly tested a stale image.
+        # Rotating weekly bounds that. The restore-keys prefix means a rotation
+        # restores last week's copy and lets sdkmanager fetch just the delta,
+        # rather than paying for a full download.
+        echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
 
     # The system image is the one large download here (system.img alone is
     # ~4.1 GiB, ~2 GiB compressed). The preview emulator package is
@@ -57,7 +66,9 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ steps.sdk.outputs.path }}/system-images/android-${{ inputs.api-level }}/${{ inputs.target }}/${{ inputs.abi }}
-        key: sysimg-v1-android-${{ inputs.api-level }}-${{ inputs.target }}-${{ inputs.abi }}
+        key: sysimg-v1-android-${{ inputs.api-level }}-${{ inputs.target }}-${{ inputs.abi }}-${{ steps.sdk.outputs.week }}
+        restore-keys: |
+          sysimg-v1-android-${{ inputs.api-level }}-${{ inputs.target }}-${{ inputs.abi }}
 
     - name: Enable KVM
       shell: bash
