@@ -91,8 +91,15 @@ banner "SETUP: AVD $AVD"
 # Only an AVD this script created may be deleted at the end -- never one that
 # was already on the machine, even if -a named it explicitly.
 CREATED_AVD=0
-if [ -d "$HOME/.android/avd/$AVD.avd" ]; then
+if [ -d "$HOME/.android/avd/$AVD.avd" ] && [ -f "$HOME/.android/avd/$AVD.ini" ]; then
   echo "reusing the existing AVD $AVD (it will be left in place)"
+elif [ -d "$HOME/.android/avd/$AVD.avd" ] || [ -f "$HOME/.android/avd/$AVD.ini" ]; then
+  # A directory without its .ini (or vice versa) is not a usable AVD -- an
+  # emulator that was still shutting down when a previous run cleaned up can
+  # leave one behind. Replace it rather than trying to boot it.
+  echo "found an incomplete AVD $AVD (missing its .ini or .avd); replacing it"
+  rm -rf "$HOME/.android/avd/$AVD.avd" "$HOME/.android/avd/$AVD.ini"
+  CREATED_AVD=1
 else
   CREATED_AVD=1
 fi
@@ -266,6 +273,15 @@ boot_and_play() {
 for n in $(seq 1 "$RUNS"); do
   boot_and_play "$n" || { echo "run $n failed"; break; }
 done
+
+# A cycle that failed part-way may leave the emulator running. Take it down and
+# wait for it before reporting or removing the AVD: an emulator still shutting
+# down will recreate the directory underneath us.
+cleanup
+if [ -n "${EMU_PGID:-}" ]; then
+  for _ in $(seq 1 60); do kill -0 -- "-$EMU_PGID" 2>/dev/null || break; sleep 1; done
+  kill -0 -- "-$EMU_PGID" 2>/dev/null && echo "WARNING: the emulator is still running; leaving the AVD alone" && KEEP=1
+fi
 
 banner "RESULT"
 echo "app pid per cycle (identical from cycle 2 on = the app survived every restore):"
