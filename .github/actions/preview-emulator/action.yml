@@ -55,6 +55,11 @@ runs:
     - name: Update SDK cmdline-tools
       shell: bash
       run: |
+        # Composite steps run with `bash -e -o pipefail`, unlike workflow `run:`
+        # steps (plain `bash -e`). Under pipefail `yes | sdkmanager` fails: yes
+        # takes SIGPIPE when sdkmanager exits. Turning pipefail off makes the
+        # pipeline report sdkmanager's status, so real failures still surface.
+        set +o pipefail
         SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
         yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --install "cmdline-tools;latest" > /dev/null
         # sdkmanager won't overwrite the preinstalled dir; it installs to latest-2.
@@ -69,6 +74,7 @@ runs:
     - name: Install system image and create AVD
       shell: bash
       run: |
+        set +o pipefail  # see "Update SDK cmdline-tools" -- `yes |` vs pipefail
         SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
         AVD='${{ inputs.avd-name }}'
         PKG='system-images;android-${{ inputs.api-level }};${{ inputs.target }};${{ inputs.abi }}'
@@ -116,6 +122,7 @@ runs:
     - name: Install preview emulator
       shell: bash
       run: |
+        set +o pipefail  # see "Update SDK cmdline-tools" -- `yes |` vs pipefail
         SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
         yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --channel=3 --install 'emulators;latest' > /dev/null
         echo "===== preview emulator version ====="
