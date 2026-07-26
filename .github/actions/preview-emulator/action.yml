@@ -42,6 +42,34 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Resolve SDK path and cache key
+      id: sdk
+      shell: bash
+      run: |
+        echo "path=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}" >> "$GITHUB_OUTPUT"
+        # actions/cache never re-saves on an exact key hit, so a fixed key would
+        # freeze the image at whatever revision was current when it was first
+        # cached: sdkmanager would re-fetch each new revision on every run and
+        # the cache would never catch up, while CI quietly tested a stale image.
+        # Rotating weekly bounds that. The restore-keys prefix means a rotation
+        # restores last week's copy and lets sdkmanager fetch just the delta,
+        # rather than paying for a full download.
+        echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+    # The system image is the one large download here (system.img alone is
+    # ~4.1 GiB, ~2 GiB compressed). The preview emulator package is
+    # deliberately NOT cached: it moves often and pinning a stale build would
+    # defeat the purpose of these jobs. sdkmanager still runs after a cache
+    # hit, so a newer image revision is still picked up.
+    - name: Restore cached system image
+      id: sysimg-cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.sdk.outputs.path }}/system-images/android-${{ inputs.api-level }}/${{ inputs.target }}/${{ inputs.abi }}
+        key: sysimg-v1-android-${{ inputs.api-level }}-${{ inputs.target }}-${{ inputs.abi }}-${{ steps.sdk.outputs.week }}
+        restore-keys: |
+          sysimg-v1-android-${{ inputs.api-level }}-${{ inputs.target }}-${{ inputs.abi }}
+
     - name: Enable KVM
       shell: bash
       run: |
@@ -78,7 +106,13 @@ runs:
         SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
         AVD='${{ inputs.avd-name }}'
         PKG='system-images;android-${{ inputs.api-level }};${{ inputs.target }};${{ inputs.abi }}'
+        # Timed so the value of caching the image can be read straight off the
+        # job log rather than inferred.
+        echo "SYSIMG-CACHE hit=${{ steps.sysimg-cache.outputs.cache-hit || 'false' }}"
+        T0=$(date +%s)
         yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --channel=3 --install "$PKG" platform-tools > /dev/null
+        echo "SYSIMG-INSTALL seconds=$(( $(date +%s) - T0 ))"
+        du -sh "$SDK/system-images/android-${{ inputs.api-level }}/${{ inputs.target }}/${{ inputs.abi }}" 2>/dev/null | sed 's/^/SYSIMG-SIZE /' || true
         # Mimic the emulator-runner action's invocation (--abi and --device
         # skip the auto-select/prompt path where bare creates silently no-op).
         echo no | "$SDK/cmdline-tools/latest/bin/avdmanager" create avd --force -n "$AVD" \
