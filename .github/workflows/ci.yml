@@ -585,11 +585,24 @@ jobs:
             # whose command line happens to contain "emulators/latest".
             setsid "$SDK/emulators/latest/emulator" @test -no-window -gpu auto -noaudio -no-boot-anim -camera-back none -memory 4096 -verbose -show-kernel -debug-metrics -metrics-collection > "${{ github.workspace }}/emulator_run$N.txt" 2>&1 &
             EMU_PID=$!
-            EMU_PGID="$(ps -o pgid= -p "$EMU_PID" 2>/dev/null | tr -d ' ')"
-            # Never group-kill our own process group (would take out this step).
-            if [ -z "$EMU_PGID" ] || [ "$EMU_PGID" = "$SELF_PGID" ]; then
+            # setsid(2) runs asynchronously in the child, so for a brief moment
+            # the pid still reports OUR process group. Reading it once loses
+            # that race intermittently (observed 1 run in 4), silently dropping
+            # to the single-pid fallback -- so poll until it settles.
+            # Never group-kill our own process group: that would take out this
+            # step, hence the SELF_PGID comparison rather than a plain -n test.
+            EMU_PGID=""
+            for _ in $(seq 1 20); do
+              P="$(ps -o pgid= -p "$EMU_PID" 2>/dev/null | tr -d ' ')"
+              if [ -n "$P" ] && [ "$P" != "$SELF_PGID" ]; then EMU_PGID="$P"; break; fi
+              # If the emulator died there is nothing left to isolate.
+              kill -0 "$EMU_PID" 2>/dev/null || break
+              sleep 0.5
+            done
+            if [ -n "$EMU_PGID" ]; then
+              echo "RUN $N emulator pid=$EMU_PID isolated in process group $EMU_PGID (self=$SELF_PGID)"
+            else
               echo "WARNING: could not isolate a process group for the emulator; falling back to single-pid shutdown"
-              EMU_PGID=""
             fi
             tail -F "${{ github.workspace }}/emulator_run$N.txt" &
             TAIL_PID=$!
