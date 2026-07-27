@@ -656,7 +656,14 @@ jobs:
                 timeout 15 adb shell dumpsys window 2>/dev/null | grep -qi "ocus.*vulkanspaceinvaders" && break
                 sleep 1
               done
-              APP_PID="$(timeout 15 adb shell pidof "$PKG" 2>/dev/null | tr -d '\r')"
+              # pidof races a launch: a single query can come back empty while
+              # the process is still starting, which would then suppress the
+              # taps below and leave the game sitting on the TITLE screen.
+              for _ in $(seq 1 15); do
+                APP_PID="$(timeout 15 adb shell pidof "$PKG" 2>/dev/null | tr -d '\r')"
+                [ -n "$APP_PID" ] && break
+                sleep 1
+              done
               echo "RUN $N app pid after launch: ${APP_PID:-none}"
             else
               # Deliberately NOT relaunched. The question this job asks is
