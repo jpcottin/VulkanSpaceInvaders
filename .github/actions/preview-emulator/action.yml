@@ -63,7 +63,7 @@ runs:
     # first run that sees it.
     - name: Restore cached system image
       id: sysimg-restore
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: ${{ steps.sdk.outputs.path }}/system-images/android-${{ inputs.api-level }}/${{ inputs.target }}/${{ inputs.abi }}
         key: sysimg-v1-android-${{ inputs.api-level }}-${{ inputs.target }}-${{ inputs.abi }}-rev
@@ -164,7 +164,7 @@ runs:
     # steady state costs nothing and a new revision is picked up once.
     - name: Save system image to cache
       if: steps.sysimg-restore.outputs.cache-matched-key != format('sysimg-v1-android-{0}-{1}-{2}-rev{3}', inputs.api-level, inputs.target, inputs.abi, steps.sysimg.outputs.revision)
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v6
       with:
         path: ${{ steps.sdk.outputs.path }}/system-images/android-${{ inputs.api-level }}/${{ inputs.target }}/${{ inputs.abi }}
         key: sysimg-v1-android-${{ inputs.api-level }}-${{ inputs.target }}-${{ inputs.abi }}-rev${{ steps.sysimg.outputs.revision }}
