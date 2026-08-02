@@ -80,7 +80,7 @@ struct Engine {
 };
 
 static double now_s() {
-    struct timespec t;
+    struct timespec t{};
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
 }

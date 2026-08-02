@@ -12,20 +12,20 @@ static int rowsForLevel(int L) {
     int r = 3 + (clampLevel(L) - 1) / 2;
     return r > 5 ? 5 : r;
 }
-static float levelMarchSpeed(int L) { return 0.09f + 0.020f * (clampLevel(L) - 1); }
+static float levelMarchSpeed(int L) { return 0.09f + 0.020f * (float)(clampLevel(L) - 1); }
 // 1.15 s at level 1 down to 0.52 s at level 10 (clampLevel bounds the range).
 static float levelBombInterval(int L) {
-    return 1.15f - 0.07f * (clampLevel(L) - 1);
+    return 1.15f - 0.07f * (float)(clampLevel(L) - 1);
 }
 static int levelMaxBombs(int L) {
     int n = 2 + (clampLevel(L) - 1) / 3;
     return n > 5 ? 5 : n;
 }
-static float levelBombSpeed(int L)  { return 0.50f + 0.05f * (clampLevel(L) - 1); }
+static float levelBombSpeed(int L)  { return 0.50f + 0.05f * (float)(clampLevel(L) - 1); }
 // Higher levels start the wave a little lower — less room before the invasion.
 static float levelStartY(int L) {
     int c = clampLevel(L) - 1;
-    return -0.66f + 0.03f * (c > 6 ? 6 : c);
+    return -0.66f + 0.03f * (float)(c > 6 ? 6 : c);
 }
 
 static const float kStarSpeed     = 0.18f;
@@ -95,7 +95,7 @@ float Game::frand() {
     uint32_t x = rng_;
     x ^= x << 13; x ^= x >> 17; x ^= x << 5;
     rng_ = x;
-    return (x & 0xFFFFFF) / float(0x1000000);
+    return float(x & 0xFFFFFF) / float(0x1000000);
 }
 float Game::frange(float a, float b) { return a + (b - a) * frand(); }
 
@@ -134,7 +134,7 @@ void Game::setViewport(int w, int h) {
 // In CONTROL_TOUCHBAR mode (AI glasses) the whole surface is the control bar;
 // in CONTROL_STRIP mode only the bottom strip counts.
 bool Game::pointerInControlZone(const Pointer& p) const {
-    return p.active && (controlMode_ == CONTROL_TOUCHBAR || p.y > vh_ * kCtrlZoneFrac);
+    return p.active && (controlMode_ == CONTROL_TOUCHBAR || p.y > (float)vh_ * kCtrlZoneFrac);
 }
 
 bool Game::moveHeld() const {
@@ -146,15 +146,14 @@ bool Game::moveHeld() const {
 float Game::controlTargetX() const {
     for (auto& p : pointers_)
         if (pointerInControlZone(p))
-            return (2.0f * p.x / vw_ - 1.0f) * asp_;
+            return (2.0f * p.x / (float)vw_ - 1.0f) * asp_;
     return aiTargetX_;   // only reached when auto-play set aiMove_
 }
 
 bool Game::fireHeld() const {
     if (autoPlayActive_ && aiFire_) return true;
-    for (auto& p : pointers_)
-        if (pointerInControlZone(p)) return true;
-    return false;
+    return std::any_of(std::begin(pointers_), std::end(pointers_),
+                       [this](const Pointer& p) { return pointerInControlZone(p); });
 }
 
 // Entering/leaving a glasses session: the phone instance freezes its own
@@ -210,7 +209,7 @@ void Game::loadHighScores() {
     if (dataPath_[0] == '\0') return;
     FILE* f = fopen(dataPath_, "rb");
     if (!f) return;
-    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf;
+    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf{};
     if (fread(&buf, sizeof(buf), 1, f) == 1 && buf.magic == kHsMagic) {
         int n = (int)buf.count < kMaxScores ? (int)buf.count : kMaxScores;
         for (int i = 0; i < n; i++) {
@@ -226,8 +225,8 @@ void Game::loadHighScores() {
 // load the same file: without it every merge would double the shared rows.
 void Game::mergeHighScore(long score, int level) {
     if (score <= 0) return;
-    for (int i = 0; i < kMaxScores; i++)
-        if (highScores_[i].score == score && highScores_[i].level == level) return;
+    for (const auto& hs : highScores_)
+        if (hs.score == score && hs.level == level) return;
     int pos = kMaxScores;
     for (int i = 0; i < kMaxScores; i++)
         if (score > highScores_[i].score) { pos = i; break; }
@@ -243,7 +242,7 @@ void Game::saveHighScores() {
     // ours first so a stale in-memory copy never clobbers a saved score.
     FILE* rf = fopen(dataPath_, "rb");
     if (rf) {
-        struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } in;
+        struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } in{};
         if (fread(&in, sizeof(in), 1, rf) == 1 && in.magic == kHsMagic) {
             int n = (int)in.count < kMaxScores ? (int)in.count : kMaxScores;
             for (int i = 0; i < n; i++)
@@ -321,8 +320,8 @@ void Game::saveSettings() {
 
 bool Game::isGearTap(float px, float py) const {
     if (controlMode_ == CONTROL_TOUCHBAR) return false;  // no gear on the glasses
-    float wy = 2.0f * py / vh_ - 1.0f;
-    float wx = (2.0f * px / vw_ - 1.0f) * asp_;
+    float wy = 2.0f * py / (float)vh_ - 1.0f;
+    float wx = (2.0f * px / (float)vw_ - 1.0f) * asp_;
     float dx = wx - (asp_ - kGearOffsetX), dy = wy - kGearWY;
     return dx*dx + dy*dy < 0.0081f;  // 0.09 world units radius
 }
@@ -399,10 +398,10 @@ void Game::buildFormation() {
 }
 
 float Game::alienX(const Alien& a) const {
-    return formationX_ + (a.col - (kCols - 1) * 0.5f) * kColStep;
+    return formationX_ + ((float)a.col - (float)(kCols - 1) * 0.5f) * kColStep;
 }
 float Game::alienY(const Alien& a) const {
-    return formationY_ + a.row * kRowStep;
+    return formationY_ + (float)a.row * kRowStep;
 }
 
 int Game::aliveAliens() const {
@@ -545,7 +544,7 @@ void Game::update(float dt) {
         case TITLE: {
             if (tapped) { startGame(); break; }
             // Demo wave slowly marching under the title.
-            formationX_ += marchDir_ * 0.06f * dt;
+            formationX_ += (float)marchDir_ * 0.06f * dt;
             if (formationX_ >  0.09f) marchDir_ = -1;
             if (formationX_ < -0.09f) marchDir_ =  1;
             beatTimer_ -= dt;
@@ -610,8 +609,8 @@ void Game::update(float dt) {
         }
         case SETTINGS: {
             if (tapped) {
-                float wy = 2.0f * tapY_ / vh_ - 1.0f;
-                float wx = (2.0f * tapX_ / vw_ - 1.0f) * asp_;
+                float wy = 2.0f * tapY_ / (float)vh_ - 1.0f;
+                float wx = (2.0f * tapX_ / (float)vw_ - 1.0f) * asp_;
                 const float kHitH = 0.12f;
                 // Rows respond only across the label-to-toggle span, not the
                 // full screen width (avoids accidental edge taps).
@@ -698,14 +697,14 @@ void Game::updateShip(float dt) {
             dir = dx > 0 ? 1 : -1;
             float step = shipSpeed_ * dt;
             if (step > fabsf(dx)) step = fabsf(dx);   // land exactly on the finger
-            shipX_ += dir * step;
+            shipX_ += (float)dir * step;
         }
     }
     float lim = asp_ - shipScale_;
     if (shipX_ > lim) shipX_ = lim;
     if (shipX_ < -lim) shipX_ = -lim;
     // Smoothly lean into direction of travel (±20°)
-    float tiltTarget = dir * 0.35f;
+    float tiltTarget = (float)dir * 0.35f;
     shipTilt_ += (tiltTarget - shipTilt_) * 9.0f * dt;
 
     if (invuln_ > 0.0f) invuln_ -= dt;
@@ -715,7 +714,7 @@ void Game::updateFormation(float dt) {
     if (aliveAliens() == 0) return;
 
     // March sideways; speed rises as the wave thins out.
-    formationX_ += marchDir_ * marchSpeed() * dt;
+    formationX_ += (float)marchDir_ * marchSpeed() * dt;
 
     // Edge bounce: reverse and step down when the outermost alive alien
     // touches a side margin.
@@ -797,7 +796,7 @@ void Game::dropBomb() {
             if (a.alive && a.col == c) { cols[nCols++] = c; break; }
     }
     if (nCols == 0) return;
-    int col = cols[(int)(frand() * nCols) % nCols];
+    int col = cols[(int)(frand() * (float)nCols) % nCols];
     const Alien* shooter = nullptr;
     for (auto& a : aliens_)
         if (a.alive && a.col == col && (!shooter || a.row > shooter->row))
@@ -1179,7 +1178,7 @@ void Game::updateAutoPlay(float dt) {
             float off = travel <= distToBounce
                 ? travel
                 : distToBounce - (travel - distToBounce);   // folds back
-            float aim = ax + marchDir_ * off;
+            float aim = ax + (float)marchDir_ * off;
             float dx  = fabsf(aim - shipX_);
             if (dx < bestDx) { bestDx = dx; targetX = aim; hasTarget = true; }
         }
@@ -1256,7 +1255,7 @@ void Game::updateAutoPlay(float dt) {
 // ---- drawing helpers ----
 void Game::emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
                 float sx, float sy, float rot, float r, float g, float b, float a,
-                float style) {
+                float style) const {
     float c = cosf(rot), s = sinf(rot);
     DrawCmd d;
     d.mtx[0] = sx * c / asp_;
@@ -1273,7 +1272,7 @@ void Game::emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
 }
 
 void Game::drawDigit(std::vector<DrawCmd>& out, int dgt, float cx, float cy,
-                     float h, float r, float g, float b, float a) {
+                     float h, float r, float g, float b, float a) const {
     if (dgt < 0 || dgt > 9) return;
     int mask = kDigitSeg[dgt];
     float w = h * 0.60f;
@@ -1293,7 +1292,7 @@ void Game::drawDigit(std::vector<DrawCmd>& out, int dgt, float cx, float cy,
     if (mask & 64) seg(cx, cy, hSegX, hSegY);                   // g middle
 }
 
-int Game::numDigits(int v) const {
+int Game::numDigits(int v) {
     if (v <= 0) return 1;
     int n = 0;
     while (v > 0) { n++; v /= 10; }
@@ -1301,7 +1300,7 @@ int Game::numDigits(int v) const {
 }
 
 void Game::drawNumber(std::vector<DrawCmd>& out, int value, float firstCx, float cy,
-                      float h, float r, float g, float b, float a) {
+                      float h, float r, float g, float b, float a) const {
     if (value < 0) value = 0;
     int n = numDigits(value);
     float w = h * 0.60f;
@@ -1313,12 +1312,12 @@ void Game::drawNumber(std::vector<DrawCmd>& out, int value, float firstCx, float
     // digits[] is reversed; draw most-significant first.
     for (int i = 0; i < n; i++) {
         int dgt = digits[n - 1 - i];
-        drawDigit(out, dgt, firstCx + i * step, cy, h, r, g, b, a);
+        drawDigit(out, dgt, firstCx + (float)i * step, cy, h, r, g, b, a);
     }
 }
 
 void Game::drawLetter(std::vector<DrawCmd>& out, char ch, float cx, float cy,
-                      float h, float r, float g, float b, float a) {
+                      float h, float r, float g, float b, float a) const {
     if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 'a' + 'A');
     if (ch >= '0' && ch <= '9') { drawDigit(out, ch - '0', cx, cy, h, r, g, b, a); return; }
     if (ch < 'A' || ch > 'Z') return;
@@ -1371,21 +1370,21 @@ void Game::drawLetter(std::vector<DrawCmd>& out, char ch, float cx, float cy,
 }
 
 void Game::drawText(std::vector<DrawCmd>& out, const char* text, float cx, float cy,
-                    float h, float r, float g, float b, float a) {
+                    float h, float r, float g, float b, float a) const {
     int total = 0;
     for (const char* p = text; *p; p++) total++;
     if (total == 0) return;
     float step = h * 0.95f;  // stroke font: wider spacing than 7-seg digits
-    float startX = cx - (total - 1) * step * 0.5f;
+    float startX = cx - (float)(total - 1) * step * 0.5f;
     for (int i = 0; text[i]; i++) {
         if (text[i] != ' ')
-            drawLetter(out, text[i], startX + i * step, cy, h, r, g, b, a);
+            drawLetter(out, text[i], startX + (float)i * step, cy, h, r, g, b, a);
     }
 }
 
 // The three-layer delta-wing fighter — same colors as the launcher icon.
 void Game::drawShip(std::vector<DrawCmd>& out, float cx, float cy, float scale,
-                    float tilt, float alpha) {
+                    float tilt, float alpha) const {
     emit(out, SHAPE_SHIP_WINGS, cx, cy, scale, scale, tilt,
          0.22f, 0.42f, 0.65f, alpha);
     emit(out, SHAPE_SHIP_BODY, cx, cy, scale, scale, tilt,
@@ -1395,7 +1394,7 @@ void Game::drawShip(std::vector<DrawCmd>& out, float cx, float cy, float scale,
 }
 
 void Game::drawAlien(std::vector<DrawCmd>& out, const Alien& a, float cx, float cy,
-                     float alpha) {
+                     float alpha) const {
     static const int kFrame0[3] = {SHAPE_INVADER_A0, SHAPE_INVADER_B0, SHAPE_INVADER_C0};
     static const int kFrame1[3] = {SHAPE_INVADER_A1, SHAPE_INVADER_B1, SHAPE_INVADER_C1};
     int shape = (marchFrame_ ? kFrame1 : kFrame0)[a.type];
@@ -1403,7 +1402,7 @@ void Game::drawAlien(std::vector<DrawCmd>& out, const Alien& a, float cx, float 
     emit(out, shape, cx, cy, kAlienHW, kAlienHH, 0.0f, c[0], c[1], c[2], alpha);
 }
 
-void Game::drawPowerUpHUD(std::vector<DrawCmd>& out) {
+void Game::drawPowerUpHUD(std::vector<DrawCmd>& out) const {
     // Left-side HUD: active bonus indicators. Shield has no timer (it lasts
     // until hit); rapid fire and triple shot show remaining time as a bar.
     float iconX = -asp_ + 0.055f;
@@ -1417,7 +1416,7 @@ void Game::drawPowerUpHUD(std::vector<DrawCmd>& out) {
         row++;
     }
     auto timedRow = [&](float timer, float cr, float cg, float cb) {
-        float y = -0.70f + row * 0.11f;
+        float y = -0.70f + (float)row * 0.11f;
         float progress = timer / kRapidDuration;
         float pulse = (timer < 2.0f) ? (0.5f + 0.5f * sinf(animTime_ * 18.0f)) : 1.0f;
         emit(out, SHAPE_QUAD, iconX, y, 0.020f, 0.020f, 0.785f, cr, cg, cb, pulse);
@@ -1433,7 +1432,7 @@ void Game::drawPowerUpHUD(std::vector<DrawCmd>& out) {
     if (tripleActive_) timedRow(tripleTimer_, 0.25f, 1.00f, 0.40f);
 }
 
-void Game::drawBossHealthBar(std::vector<DrawCmd>& out) {
+void Game::drawBossHealthBar(std::vector<DrawCmd>& out) const {
     if (!bossActive_ || !boss_.alive) return;
     float progress = (float)boss_.hp / (float)boss_.maxHp;
     float barW = asp_ * 0.80f;
@@ -1449,7 +1448,7 @@ void Game::drawBossHealthBar(std::vector<DrawCmd>& out) {
 
 // The touch strip below the ship: a faint backdrop, a divider line, and a
 // steering marker under the ship so the player knows where their finger acts.
-void Game::drawControlStrip(std::vector<DrawCmd>& out) {
+void Game::drawControlStrip(std::vector<DrawCmd>& out) const {
     bool held = false;
     for (auto& p : pointers_)
         if (pointerInControlZone(p)) { held = true; break; }
@@ -1467,7 +1466,7 @@ void Game::drawControlStrip(std::vector<DrawCmd>& out) {
 }
 
 void Game::drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,
-                         float r, float g, float b, float a) {
+                         float r, float g, float b, float a) const {
     // Circular body
     const float bodyR = size * 0.68f;
     emit(out, SHAPE_DISC, cx, cy, bodyR, bodyR, 0.0f, r, g, b, a);
@@ -1477,7 +1476,7 @@ void Game::drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float siz
     const float toothHW = size * 0.20f;   // tooth half-width  (tangential)
     const float toothHH = size * 0.30f;   // tooth half-height (radial)
     for (int i = 0; i < 6; i++) {
-        float ang = i * 1.0472f;  // 60° apart
+        float ang = (float)i * 1.0472f;  // 60° apart
         emit(out, SHAPE_QUAD,
              cx + cosf(ang) * toothCR,
              cy + sinf(ang) * toothCR,
@@ -1491,12 +1490,12 @@ void Game::drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float siz
 
 // A pair of glasses: two lens rings joined by a bridge, with short temples.
 void Game::drawGlassesIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,
-                           float r, float g, float b, float a) {
+                           float r, float g, float b, float a) const {
     const float lensR  = size * 0.55f;
     const float lensDX = size * 0.72f;
     for (int s = -1; s <= 1; s += 2) {
-        emit(out, SHAPE_DISC, cx + s * lensDX, cy, lensR, lensR, 0.0f, r, g, b, a);
-        emit(out, SHAPE_DISC, cx + s * lensDX, cy, lensR * 0.62f, lensR * 0.62f, 0.0f,
+        emit(out, SHAPE_DISC, cx + (float)s * lensDX, cy, lensR, lensR, 0.0f, r, g, b, a);
+        emit(out, SHAPE_DISC, cx + (float)s * lensDX, cy, lensR * 0.62f, lensR * 0.62f, 0.0f,
              0.04f, 0.06f, 0.14f, a);   // punch the lens hole in overlay colour
     }
     // Bridge
@@ -1504,12 +1503,12 @@ void Game::drawGlassesIcon(std::vector<DrawCmd>& out, float cx, float cy, float 
          0.0f, r, g, b, a);
     // Temples
     for (int s = -1; s <= 1; s += 2)
-        emit(out, SHAPE_QUAD, cx + s * (lensDX + lensR * 1.15f), cy - lensR * 0.25f,
+        emit(out, SHAPE_QUAD, cx + (float)s * (lensDX + lensR * 1.15f), cy - lensR * 0.25f,
              lensR * 0.55f, size * 0.09f, 0.0f, r, g, b, a);
 }
 
 // Phone-side banner while the game runs on the glasses.
-void Game::drawOnGlassesOverlay(std::vector<DrawCmd>& out) {
+void Game::drawOnGlassesOverlay(std::vector<DrawCmd>& out) const {
     emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f, 0.03f, 0.05f, 0.12f, 0.80f);
     float pulse = 0.6f + 0.4f * sinf(animTime_ * 3.0f);
     drawGlassesIcon(out, 0.0f, -0.22f, 0.10f, 0.35f, 0.95f, 0.55f, pulse);
@@ -1518,7 +1517,7 @@ void Game::drawOnGlassesOverlay(std::vector<DrawCmd>& out) {
     drawText(out, "TO PLAY ON PHONE", 0.0f, 0.24f, 0.038f, 0.65f, 0.72f, 0.85f, 0.9f);
 }
 
-void Game::drawSettingsScreen(std::vector<DrawCmd>& out) {
+void Game::drawSettingsScreen(std::vector<DrawCmd>& out) const {
     // Full-screen dark overlay
     emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f, 0.04f, 0.06f, 0.14f, 0.93f);
 
@@ -1592,7 +1591,7 @@ void Game::drawSettingsScreen(std::vector<DrawCmd>& out) {
 // portrait phone (~0.95 world units wide) at the full 0.30 height.
 static float endScoreHeight(int digits, float asp) {
     const float kMaxH = 0.30f;
-    float span = 0.87f * (digits - 1) + 0.60f;
+    float span = 0.87f * (float)(digits - 1) + 0.60f;
     float h = 2.0f * asp * 0.90f / span;   // fill at most 90% of the width
     return h < kMaxH ? h : kMaxH;
 }
@@ -1713,7 +1712,7 @@ void Game::render(std::vector<DrawCmd>& out) {
         float alpha = bonusFlashTimer_ / 0.9f;
         int n = numDigits((int)bonusFlash_);
         float h = 0.055f, step = h * 0.60f * 1.45f;
-        drawNumber(out, (int)bonusFlash_, bonusFlashX_ - (n - 1) * step * 0.5f,
+        drawNumber(out, (int)bonusFlash_, bonusFlashX_ - (float)(n - 1) * step * 0.5f,
                    bonusFlashY_, h, 1.0f, 0.85f, 0.10f, alpha);
     }
 
@@ -1730,14 +1729,14 @@ void Game::render(std::vector<DrawCmd>& out) {
                    1.0f, 1.0f, 1.0f, 1.0f);
         // level number top-right (yellow), right-aligned — supports 2 digits at level 10
         int nd = numDigits(level_);
-        float levelFirstCx = asp_ - 0.06f - w * 0.5f - (nd - 1) * step;
+        float levelFirstCx = asp_ - 0.06f - w * 0.5f - (float)(nd - 1) * step;
         drawNumber(out, level_, levelFirstCx, -0.90f, h,
                    1.0f, 0.85f, 0.2f, 1.0f);
         // lives as small ship icons, top-center
         float ls = 0.03f, gap = 0.085f;
-        float startX = -(lives_ - 1) * gap * 0.5f;
+        float startX = -(float)(lives_ - 1) * gap * 0.5f;
         for (int i = 0; i < lives_; i++)
-            drawShip(out, startX + i * gap, -0.90f, ls, 0.0f, 1.0f);
+            drawShip(out, startX + (float)i * gap, -0.90f, ls, 0.0f, 1.0f);
 
         drawPowerUpHUD(out);
         drawBossHealthBar(out);
@@ -1785,7 +1784,7 @@ void Game::render(std::vector<DrawCmd>& out) {
              0.6f, 0.05f, 0.08f, 0.32f + 0.10f * pulse);
         int n = numDigits((int)score_);
         float fh = endScoreHeight(n, asp_), fw = fh * 0.6f * 1.45f;
-        float firstCx = -(n - 1) * fw * 0.5f;
+        float firstCx = -(float)(n - 1) * fw * 0.5f;
         // Gold pulsing score if new high score, white otherwise
         float sr = 1.0f, sg = newHighScore_ ? (0.75f + 0.20f*pulse) : 1.0f, sb = newHighScore_ ? 0.10f : 1.0f;
         drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
@@ -1802,7 +1801,7 @@ void Game::render(std::vector<DrawCmd>& out) {
              0.1f, 0.5f, 0.15f, 0.30f + 0.10f * pulse);
         int n = numDigits((int)score_);
         float fh = endScoreHeight(n, asp_), fw = fh * 0.6f * 1.45f;
-        float firstCx = -(n - 1) * fw * 0.5f;
+        float firstCx = -(float)(n - 1) * fw * 0.5f;
         float sr = 1.0f, sg = newHighScore_ ? (0.80f + 0.15f*pulse) : 0.9f, sb = newHighScore_ ? 0.10f : 0.3f;
         drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
         if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {

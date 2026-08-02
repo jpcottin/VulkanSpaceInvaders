@@ -164,7 +164,7 @@ TEST(March, StaysWithinSideMargins) {
             // Centers reverse at asp - margin - halfWidth = asp - 0.053;
             // 0.05 leaves slack for a single frame of overshoot.
             ASSERT_LT(fabsf(g.alienXForTest(a)), aspect() - 0.05f)
-                << "alien " << a << " out of margin after " << (i + 1) * 0.1f << " s";
+                << "alien " << a << " out of margin after " << (float)(i + 1) * 0.1f << " s";
         }
     }
 }
