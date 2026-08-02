@@ -65,13 +65,15 @@ private:
     // One invader. Its world position derives from the formation origin plus
     // its (row, col) slot, so the whole wave marches as a unit.
     struct Alien {
-        int  row, col;
-        AlienType type;
-        bool alive;
+        int  row = 0, col = 0;
+        AlienType type = ALIEN_SQUID;
+        bool alive = false;
     };
-    struct Bullet  { float x, y, vx, vy; bool alive; };          // player laser, flies up
-    struct Bomb    { float x, y, vx, vy, wobble; bool alive; };  // alien laser, falls down
-    struct Saucer  { float x, y, vx; bool alive = false; };
+    // player laser, flies up
+    struct Bullet  { float x = 0.0f, y = 0.0f, vx = 0.0f, vy = 0.0f; bool alive = false; };
+    // alien laser, falls down
+    struct Bomb    { float x = 0.0f, y = 0.0f, vx = 0.0f, vy = 0.0f, wobble = 0.0f; bool alive = false; };
+    struct Saucer  { float x = 0.0f, y = 0.0f, vx = 0.0f; bool alive = false; };
     // Level-10 boss: a giant mothership drifting sinusoidally across the top,
     // lobbing bombs aimed at the player. Killing it wins the game.
     struct Boss {
@@ -79,22 +81,26 @@ private:
         int   hp = 0, maxHp = 0;
         bool  alive = false;
     };
-    struct PowerUp { float x, y, vy, rot, spin; PowerUpType type; bool alive; };
+    struct PowerUp {
+        float x = 0.0f, y = 0.0f, vy = 0.0f, rot = 0.0f, spin = 0.0f;
+        PowerUpType type = PU_SHIELD;
+        bool alive = false;
+    };
     struct Particle {
-        float x, y, vx, vy;
-        float rot, spin;
-        float t, maxLife, size;
-        float r, g, b;
-        bool alive;
+        float x = 0.0f, y = 0.0f, vx = 0.0f, vy = 0.0f;
+        float rot = 0.0f, spin = 0.0f;
+        float t = 0.0f, maxLife = 0.0f, size = 0.0f;
+        float r = 0.0f, g = 0.0f, b = 0.0f;
+        bool alive = false;
     };
     struct Explosion {
-        float x, y, radius;
-        float t, maxLife;
-        float cr, cg, cb;
-        bool alive;
+        float x = 0.0f, y = 0.0f, radius = 0.0f;
+        float t = 0.0f, maxLife = 0.0f;
+        float cr = 0.0f, cg = 0.0f, cb = 0.0f;
+        bool alive = false;
     };
-    struct Star { float x, y, size, phase; };
-    struct Pointer { bool active; float x, y; };
+    struct Star { float x = 0.0f, y = 0.0f, size = 0.0f, phase = 0.0f; };
+    struct Pointer { bool active = false; float x = 0.0f, y = 0.0f; };
     struct HighScore { long score = 0; int level = 0; };
 
     static const int kMaxScores = 5;
@@ -142,33 +148,33 @@ private:
     // style selects the fragment-shader fill (STYLE_FLAT default, STYLE_GLOW).
     void emit(std::vector<DrawCmd>& out, int shape, float wx, float wy,
               float sx, float sy, float rot, float r, float g, float b, float a,
-              float style = (float)STYLE_FLAT);
+              float style = (float)STYLE_FLAT) const;
     void drawDigit(std::vector<DrawCmd>& out, int d, float cx, float cy,
-                   float h, float r, float g, float b, float a);
+                   float h, float r, float g, float b, float a) const;
     void drawNumber(std::vector<DrawCmd>& out, int value, float leftX, float cy,
-                    float h, float r, float g, float b, float a);
+                    float h, float r, float g, float b, float a) const;
     void drawLetter(std::vector<DrawCmd>& out, char ch, float cx, float cy,
-                    float h, float r, float g, float b, float a);
+                    float h, float r, float g, float b, float a) const;
     void drawText(std::vector<DrawCmd>& out, const char* text, float cx, float cy,
-                  float h, float r, float g, float b, float a);
+                  float h, float r, float g, float b, float a) const;
     void drawShip(std::vector<DrawCmd>& out, float cx, float cy, float scale,
-                  float tilt, float alpha);
+                  float tilt, float alpha) const;
     void drawAlien(std::vector<DrawCmd>& out, const Alien& a, float cx, float cy,
-                   float alpha);
-    void drawPowerUpHUD(std::vector<DrawCmd>& out);
-    void drawBossHealthBar(std::vector<DrawCmd>& out);
-    void drawControlStrip(std::vector<DrawCmd>& out);
+                   float alpha) const;
+    void drawPowerUpHUD(std::vector<DrawCmd>& out) const;
+    void drawBossHealthBar(std::vector<DrawCmd>& out) const;
+    void drawControlStrip(std::vector<DrawCmd>& out) const;
     void drawGearIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,
-                      float r, float g, float b, float a);
+                      float r, float g, float b, float a) const;
     void drawGlassesIcon(std::vector<DrawCmd>& out, float cx, float cy, float size,
-                         float r, float g, float b, float a);
-    void drawOnGlassesOverlay(std::vector<DrawCmd>& out);
-    void drawSettingsScreen(std::vector<DrawCmd>& out);
+                         float r, float g, float b, float a) const;
+    void drawOnGlassesOverlay(std::vector<DrawCmd>& out) const;
+    void drawSettingsScreen(std::vector<DrawCmd>& out) const;
     void loadSettings();
     void saveSettings();
     void updateAutoPlay(float dt);
     bool isGearTap(float px, float py) const;
-    int numDigits(int v) const;
+    static int numDigits(int v);
 
     // --- audio ---
     AudioEngine* audio_ = nullptr;

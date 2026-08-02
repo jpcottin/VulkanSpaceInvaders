@@ -2,7 +2,9 @@
 #include "audio.h"
 AudioEngine::AudioEngine() = default;
 AudioEngine::~AudioEngine() {}   // impl_ is always nullptr in stubs
-bool AudioEngine::init()              { return false; }
+// NOLINT below: the stub ignores `this`, but the real audio.cpp impl doesn't,
+// so the shared declaration in audio.h cannot be static.
+bool AudioEngine::init()              { return false; }  // NOLINT(readability-convert-member-functions-to-static)
 void AudioEngine::shutdown()          {}
 void AudioEngine::triggerLaser()      {}
 void AudioEngine::triggerExplosion()  {}

@@ -266,10 +266,10 @@ bool VkRenderer::createVertexBuffer() {
         for (int r = 0; r < h; r++) {
             for (int c = 0; c < w; c++) {
                 if (rows[r][c] != 'X') continue;
-                float x0 = -1.0f + 2.0f * c / w;
-                float x1 = -1.0f + 2.0f * (c + 1) / w;
-                float y0 = -1.0f + 2.0f * r / h;
-                float y1 = -1.0f + 2.0f * (r + 1) / h;
+                float x0 = -1.0f + 2.0f * (float)c / (float)w;
+                float x1 = -1.0f + 2.0f * (float)(c + 1) / (float)w;
+                float y0 = -1.0f + 2.0f * (float)r / (float)h;
+                float y1 = -1.0f + 2.0f * (float)(r + 1) / (float)h;
                 push(x0, y0); push(x1, y0); push(x1, y1);
                 push(x0, y0); push(x1, y1); push(x0, y1);
             }
@@ -773,10 +773,10 @@ void VkRenderer::recordCommandBuffer(VkCommandBuffer cb, uint32_t imageIndex,
     // Centered viewport, scaled by renderScale_ (1.0 = full surface). The
     // render pass has already cleared the whole framebuffer, so the surround
     // is clear-colour (black = transparent on AR lenses).
-    float vw = extent_.width * renderScale_;
-    float vh = extent_.height * renderScale_;
-    float vx = (extent_.width - vw) * 0.5f;
-    float vy = (extent_.height - vh) * 0.5f;
+    float vw = (float)extent_.width * renderScale_;
+    float vh = (float)extent_.height * renderScale_;
+    float vx = ((float)extent_.width - vw) * 0.5f;
+    float vy = ((float)extent_.height - vh) * 0.5f;
     VkViewport vpt{vx, vy, vw, vh, 0.0f, 1.0f};
     VkRect2D sc{{(int32_t)vx, (int32_t)vy}, {(uint32_t)vw, (uint32_t)vh}};
     vkCmdSetViewport(cb, 0, 1, &vpt);

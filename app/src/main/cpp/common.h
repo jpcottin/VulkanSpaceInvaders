@@ -34,10 +34,10 @@ enum FillStyle {
 // a shape. The renderer repacks these into per-instance vertex attributes
 // (InstanceData in vk_renderer.cpp) consumed by shape.vert/.frag.
 struct DrawCmd {
-    float mtx[4];   // m00, m01, m10, m11
-    float tx, ty;   // NDC translation
-    float color[4]; // r, g, b, a
-    float style;    // FillStyle (as float — goes straight into the instance attributes)
-    float seed;     // reserved per-draw parameter (unused by current styles)
-    int shape;
+    float mtx[4] = {};       // m00, m01, m10, m11
+    float tx = 0.0f, ty = 0.0f;   // NDC translation
+    float color[4] = {};     // r, g, b, a
+    float style = 0.0f;      // FillStyle (as float — goes straight into the instance attributes)
+    float seed = 0.0f;       // reserved per-draw parameter (unused by current styles)
+    int shape = 0;
 };
