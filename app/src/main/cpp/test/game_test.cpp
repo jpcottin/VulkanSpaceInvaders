@@ -769,12 +769,19 @@ TEST(Boss, FiresAimedBombs) {
     g.startLevelForTest(10);
     // Remove the escort so the only bombs left are the boss's.
     for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
+    g.setBossTimeForTest(0.0f);          // boss at x = 0
+    g.setShipXForTest(0.35f);            // ship well off to the right
     bool seen = false;
     for (int i = 0; i < 300 && !seen; i++) {
+        g.setBossTimeForTest(0.0f);
+        g.setShipXForTest(0.35f);
         g.update(1.0f / 60.0f);
         seen = g.bombCount() > 0;
     }
-    EXPECT_TRUE(seen);
+    ASSERT_TRUE(seen);
+    // "Aimed": the bomb leaves the boss heading toward the ship, not straight down.
+    EXPECT_NEAR(g.bombXForTest(0), 0.0f, 0.05f);
+    EXPECT_GT(g.bombVxForTest(0), 0.1f);
 }
 
 TEST(Boss, TakesHitsAndDiesForTheWin) {
@@ -800,6 +807,9 @@ TEST(Boss, TakesHitsAndDiesForTheWin) {
     EXPECT_LT(g.bossHpForTest(), hp0);
     EXPECT_TRUE(g.isWinForTest());
     EXPECT_GE(g.score() - before, 250L * 10);
+    // The table is written on the WIN transition; nothing in the rest of the
+    // winning volley may add to the score afterwards.
+    EXPECT_EQ(g.highScoreForTest(0), g.score());
 }
 
 TEST(Boss, AutoPlayTargetsTheBoss) {
@@ -1423,6 +1433,55 @@ TEST(Progression, TitleReturnClearsLeftovers) {
     EXPECT_EQ(g.bulletCount(), 0);
     EXPECT_FALSE(g.saucerAliveForTest());
     EXPECT_FALSE(g.shieldActiveForTest());
+}
+
+TEST(Progression, TitleReturnResetsInvulnAndBoss) {
+    // A fatal hit leaves invuln_ at 1.5 s and only updateShip decays it, so
+    // the title ship would blink forever; a level-10 death likewise leaves
+    // the mothership drawn under the title's Settings overlay.
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    ASSERT_TRUE(g.bossActiveForTest());
+    for (int hit = 0; hit < 3; hit++) {         // three bomb hits: game over
+        g.clearInvulnForTest();
+        g.spawnTestBomb(g.shipX(), g.shipY(), 0.30f);
+        g.update(0.016f);
+    }
+    ASSERT_TRUE(g.isGameOverForTest());
+    ASSERT_GT(g.invulnForTest(), 0.0f);
+    step(g, 0.7f);
+    tap(g, kW * 0.5f, kH * 0.5f);
+    g.update(0.016f);
+    ASSERT_TRUE(g.inTitleForTest());
+    EXPECT_EQ(g.invulnForTest(), 0.0f);
+    EXPECT_FALSE(g.bossActiveForTest());
+    EXPECT_FALSE(g.bossAliveForTest());
+}
+
+TEST(HighScores, TieWithExistingEntryDoesNotDuplicate) {
+    // checkHighScore() must apply the same dedupe rule as the disk merge, or
+    // a tie becomes two identical rows on one instance and none on the other.
+    Game g;
+    startPlaying(g);
+    g.setScoreForTest(30);
+    g.setFormationYForTest(0.72f);
+    g.update(0.016f);                           // invasion -> GAME_OVER, saved 30/1
+    ASSERT_TRUE(g.isGameOverForTest());
+    ASSERT_EQ(g.highScoreForTest(0), 30L);
+    step(g, 0.7f);
+    tap(g, kW * 0.5f, kH * 0.5f);
+    g.update(0.016f);                           // -> TITLE
+    tap(g, kW * 0.5f, kH * 0.5f);
+    g.update(0.016f);                           // -> new round
+    ASSERT_TRUE(g.isPlayingForTest());
+    g.setScoreForTest(30);
+    g.setFormationYForTest(0.72f);
+    g.update(0.016f);                           // second 30/1
+    ASSERT_TRUE(g.isGameOverForTest());
+    EXPECT_EQ(g.highScoreForTest(0), 30L);
+    EXPECT_EQ(g.highScoreForTest(1), 0L);       // not duplicated
+    EXPECT_FALSE(g.newHighScoreForTest());      // and not celebrated as a new record
 }
 
 TEST(Progression, LevelClearWipesInFlightBombs) {

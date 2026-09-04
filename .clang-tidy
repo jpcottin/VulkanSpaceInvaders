@@ -1,0 +1,12 @@
+# Pins the check set Android Studio runs so every contributor sees the same
+# warnings. Integer-to-float narrowing (loop indices, level numbers, viewport
+# sizes) is lossless here, and the casts it demands only clutter the maths.
+Checks: >
+  clang-diagnostic-*,
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  -bugprone-easily-swappable-parameters
+CheckOptions:
+  - key: bugprone-narrowing-conversions.WarnOnIntegerToFloatingPointNarrowingConversion
+    value: false

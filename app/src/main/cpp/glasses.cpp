@@ -30,17 +30,24 @@ private:
 
 // Load an app class through the activity's ClassLoader — FindClass on a
 // native thread only sees system classes.
+// The game thread stays JNI-attached for its whole life and never returns
+// to Java, so local references are never reclaimed automatically: every one
+// made here is deleted explicitly.
 jclass loadAppClass(JNIEnv* env, jobject activity, const char* name) {
     jclass activityCls = env->GetObjectClass(activity);
     jmethodID getLoader = env->GetMethodID(activityCls, "getClassLoader",
                                            "()Ljava/lang/ClassLoader;");
     jobject loader = env->CallObjectMethod(activity, getLoader);
+    env->DeleteLocalRef(activityCls);
+    if (env->ExceptionCheck() || !loader) { env->ExceptionClear(); return nullptr; }
     jclass loaderCls = env->GetObjectClass(loader);
     jmethodID loadClass = env->GetMethodID(loaderCls, "loadClass",
                                            "(Ljava/lang/String;)Ljava/lang/Class;");
+    env->DeleteLocalRef(loaderCls);
     jstring jname = env->NewStringUTF(name);
     auto cls = (jclass)env->CallObjectMethod(loader, loadClass, jname);
     env->DeleteLocalRef(jname);
+    env->DeleteLocalRef(loader);
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
         return nullptr;
@@ -58,6 +65,7 @@ struct BridgeCache {
     jmethodID startMonitoring = nullptr;
     jmethodID isConnected     = nullptr;
     jmethodID launchOnGlasses = nullptr;
+    bool      failed          = false;     // lookup failed once: don't retry every second
 };
 BridgeCache g_bridge;
 
@@ -71,17 +79,26 @@ jmethodID staticMethod(JNIEnv* env, jclass cls, const char* name, const char* si
 
 const BridgeCache* bridge(JNIEnv* env, android_app* app) {
     if (g_bridge.cls) return &g_bridge;
+    if (g_bridge.failed) return nullptr;
     jclass cls = loadAppClass(env, app->activity->clazz,
                               "com.jpcottin.vulkanspaceinvaders.GlassesBridge");
-    if (!cls) { LOGW("GlassesBridge class not found"); return nullptr; }
+    if (!cls) {
+        LOGW("GlassesBridge class not found; glasses support disabled");
+        g_bridge.failed = true;
+        return nullptr;
+    }
     jmethodID start  = staticMethod(env, cls, "startMonitoring",
                                     "(Landroid/content/Context;)V");
     jmethodID isConn = staticMethod(env, cls, "isConnected", "()Z");
     jmethodID launch = staticMethod(env, cls, "launchOnGlasses",
                                     "(Landroid/app/Activity;)Z");
-    if (!start || !isConn || !launch) return nullptr;
-    g_bridge.cls = (jclass)env->NewGlobalRef(cls);
-    if (!g_bridge.cls) return nullptr;
+    if (start && isConn && launch) g_bridge.cls = (jclass)env->NewGlobalRef(cls);
+    env->DeleteLocalRef(cls);
+    if (!g_bridge.cls) {
+        LOGW("GlassesBridge incomplete; glasses support disabled");
+        g_bridge.failed = true;
+        return nullptr;
+    }
     g_bridge.startMonitoring = start;
     g_bridge.isConnected     = isConn;
     g_bridge.launchOnGlasses = launch;
@@ -95,12 +112,15 @@ bool glassesIsGlassesActivity(android_app* app) {
     JNIEnv* env = se.get();
     if (!env) return false;
     jclass cls = env->GetObjectClass(app->activity->clazz);
-    jmethodID getName = env->GetMethodID(env->GetObjectClass(cls), "getName",
-                                         "()Ljava/lang/String;");
+    jclass clsCls = env->GetObjectClass(cls);
+    jmethodID getName = env->GetMethodID(clsCls, "getName", "()Ljava/lang/String;");
     auto jname = (jstring)env->CallObjectMethod(cls, getName);
     const char* name = env->GetStringUTFChars(jname, nullptr);
     bool isGlasses = strstr(name, "GlassesGameActivity") != nullptr;
     env->ReleaseStringUTFChars(jname, name);
+    env->DeleteLocalRef(jname);
+    env->DeleteLocalRef(clsCls);
+    env->DeleteLocalRef(cls);
     return isGlasses;
 }
 

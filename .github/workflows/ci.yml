@@ -12,6 +12,7 @@ jobs:
   build:
     name: Build APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v6
@@ -42,6 +43,7 @@ jobs:
   test:
     name: Native Tests (API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -89,6 +91,7 @@ jobs:
   smoke:
     name: Smoke Test (API ${{ matrix.api-level }}${{ matrix.suffix && format(' {0}', matrix.suffix) || '' }})
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     # API 37.0 ps16k legs are preview images; run them non-blocking so a flaky
     # or unavailable preview emulator never gates a PR.
     continue-on-error: ${{ matrix.experimental || false }}
@@ -259,6 +262,7 @@ jobs:
 
       - name: Install NDK 29
         run: |
+          set -o pipefail  # a failed sdkmanager must fail the step, not tail
           echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
             "ndk;29.0.14206865" 2>&1 | tail -3
 

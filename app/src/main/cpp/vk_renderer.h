@@ -18,6 +18,15 @@ public:
     void cleanup();
 
     bool ready() const { return swapchainReady_; }
+    // A window exists but nothing can be drawn (a failed swapchain or surface
+    // rebuild, a lost device): the main loop keeps calling tryRecover()
+    // instead of blocking until a window event that may never come.
+    bool needsRecovery() const { return window_ != nullptr && !swapchainReady_; }
+    void tryRecover();
+    // True once device creation has established that this GPU can never
+    // drive the window (no physical device, no graphics+present queue): the
+    // activity should finish rather than retry.
+    bool unsupported() const { return unsupported_; }
     int width() const { return (int)extent_.width; }
     int height() const { return (int)extent_.height; }
 
@@ -38,9 +47,22 @@ public:
 private:
     bool ensureDevice();
     void teardownDevice();
+    // teardownDevice plus the render pass and pipeline: everything that hangs
+    // off device_. Used by cleanup() and to rebuild after a device loss or a
+    // submit failure that left a fence unsignalled.
+    void destroyDeviceObjects();
+    bool createSurface();
+    void destroySurface();
+    // Device + swapchain + pipeline for window_ / surface_. Sets swapchainReady_.
+    bool setupForWindow();
     bool createSwapchain();
+    bool createSwapchainInner();
     void destroySwapchain();
     bool recreateSurface();
+    // Unrecoverable-in-frame error: stop drawing and have the next recovery
+    // rebuild the device-level state.
+    void stopRendering(const char* what, VkResult r);
+    bool createHostBuffer(VkDeviceSize size, VkBuffer& buf, VkDeviceMemory& mem);
     bool createRenderPass();
     bool createPipeline();
     bool createVertexBuffer();
@@ -95,6 +117,8 @@ private:
     uint32_t frameCount_ = 0;
 
     bool deviceReady_ = false;
+    bool deviceBroken_ = false;   // rebuild device state before drawing again
+    bool unsupported_ = false;
     bool swapchainReady_ = false;
     bool firstFramePresented_ = false;   // logged once, the smoke test's capture cue
     bool lowLatency_ = false;

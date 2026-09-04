@@ -164,7 +164,7 @@ bool VkRenderer::ensureDevice() {
 
     uint32_t count = 0;
     vkEnumeratePhysicalDevices(instance_, &count, nullptr);
-    if (count == 0) { LOGE("No Vulkan physical devices"); return false; }
+    if (count == 0) { LOGE("No Vulkan physical devices"); unsupported_ = true; return false; }
     std::vector<VkPhysicalDevice> devices(count);
     vkEnumeratePhysicalDevices(instance_, &count, devices.data());
 
@@ -185,7 +185,7 @@ bool VkRenderer::ensureDevice() {
         }
         if (phys_ != VK_NULL_HANDLE) break;
     }
-    if (phys_ == VK_NULL_HANDLE) { LOGE("No suitable GPU/queue"); return false; }
+    if (phys_ == VK_NULL_HANDLE) { LOGE("No suitable GPU/queue"); unsupported_ = true; return false; }
 
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(phys_, &props);
@@ -378,27 +378,33 @@ bool VkRenderer::createVertexBuffer() {
     shapeCount_[SHAPE_SHIP_NOSE] = 3;
 
     VkDeviceSize size = v.size() * sizeof(float);
+    if (!createHostBuffer(size, vbo_, vboMem_)) return false;
+
+    void* dst = nullptr;
+    VK_CHECK(vkMapMemory(device_, vboMem_, 0, size, 0, &dst));
+    memcpy(dst, v.data(), size);
+    vkUnmapMemory(device_, vboMem_);
+    return true;
+}
+
+// A host-visible, host-coherent vertex buffer with its memory bound.
+bool VkRenderer::createHostBuffer(VkDeviceSize size, VkBuffer& buf, VkDeviceMemory& mem) {
     VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bci.size = size;
     bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    VK_CHECK(vkCreateBuffer(device_, &bci, nullptr, &vbo_));
+    VK_CHECK(vkCreateBuffer(device_, &bci, nullptr, &buf));
 
     VkMemoryRequirements req;
-    vkGetBufferMemoryRequirements(device_, vbo_, &req);
+    vkGetBufferMemoryRequirements(device_, buf, &req);
     VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     mai.allocationSize = req.size;
     mai.memoryTypeIndex = findMemoryType(
         req.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     if (mai.memoryTypeIndex == UINT32_MAX) { LOGE("No host-visible memory"); return false; }
-    VK_CHECK(vkAllocateMemory(device_, &mai, nullptr, &vboMem_));
-    VK_CHECK(vkBindBufferMemory(device_, vbo_, vboMem_, 0));
-
-    void* dst = nullptr;
-    VK_CHECK(vkMapMemory(device_, vboMem_, 0, size, 0, &dst));
-    memcpy(dst, v.data(), size);
-    vkUnmapMemory(device_, vboMem_);
+    VK_CHECK(vkAllocateMemory(device_, &mai, nullptr, &mem));
+    VK_CHECK(vkBindBufferMemory(device_, buf, mem, 0));
     return true;
 }
 
@@ -409,22 +415,7 @@ bool VkRenderer::createVertexBuffer() {
 bool VkRenderer::createInstanceBuffers() {
     VkDeviceSize size = kMaxInstances * sizeof(InstanceData);
     for (int i = 0; i < framesInFlight(); i++) {
-        VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        bci.size = size;
-        bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        VK_CHECK(vkCreateBuffer(device_, &bci, nullptr, &instBuf_[i]));
-
-        VkMemoryRequirements req;
-        vkGetBufferMemoryRequirements(device_, instBuf_[i], &req);
-        VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        mai.allocationSize = req.size;
-        mai.memoryTypeIndex = findMemoryType(
-            req.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        if (mai.memoryTypeIndex == UINT32_MAX) { LOGE("No host-visible memory"); return false; }
-        VK_CHECK(vkAllocateMemory(device_, &mai, nullptr, &instMem_[i]));
-        VK_CHECK(vkBindBufferMemory(device_, instBuf_[i], instMem_[i], 0));
+        if (!createHostBuffer(size, instBuf_[i], instMem_[i])) return false;
         VK_CHECK(vkMapMemory(device_, instMem_[i], 0, size, 0, &instMapped_[i]));
     }
     return true;
@@ -588,9 +579,22 @@ bool VkRenderer::createPipeline() {
     return true;
 }
 
+// Any failure past vkCreateSwapchainKHR would otherwise leave swapchain_
+// non-null with null views / framebuffers / pipeline, which the next frame's
+// "swapchain_ == null -> retry" check would trust: tear it back down so the
+// retry actually fires.
 bool VkRenderer::createSwapchain() {
-    VkSurfaceCapabilitiesKHR caps;
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_, surface_, &caps);
+    if (surface_ != VK_NULL_HANDLE && createSwapchainInner()) return true;
+    destroySwapchain();
+    // Route the retry through the main loop's recovery timer instead of the
+    // per-frame self-heal, which would spin at 100% CPU on a persistent failure.
+    swapchainReady_ = false;
+    return false;
+}
+
+bool VkRenderer::createSwapchainInner() {
+    VkSurfaceCapabilitiesKHR caps{};
+    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_, surface_, &caps));
 
     extent_ = caps.currentExtent;
     if (extent_.width == 0xFFFFFFFF) {
@@ -641,7 +645,13 @@ bool VkRenderer::createSwapchain() {
     sci.imageArrayLayers = 1;
     sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    sci.preTransform = caps.currentTransform;
+    // Nothing in the vertex path pre-rotates content, so ask for IDENTITY and
+    // let the compositor rotate on landscape-native panels (tablets, fold
+    // inner screens, a rotated projected display). Promising currentTransform
+    // without applying it would draw the game sideways there.
+    sci.preTransform = (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+                           ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
+                           : caps.currentTransform;
     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     sci.presentMode = presentMode;
     sci.clipped = VK_TRUE;
@@ -651,9 +661,9 @@ bool VkRenderer::createSwapchain() {
              imageCount, (int)presentMode);
 
     uint32_t n = 0;
-    vkGetSwapchainImagesKHR(device_, swapchain_, &n, nullptr);
+    VK_CHECK(vkGetSwapchainImagesKHR(device_, swapchain_, &n, nullptr));
     images_.resize(n);
-    vkGetSwapchainImagesKHR(device_, swapchain_, &n, images_.data());
+    VK_CHECK(vkGetSwapchainImagesKHR(device_, swapchain_, &n, images_.data()));
 
     // One present-wait semaphore per swapchain image (see vk_renderer.h).
     renderFinished_.resize(n, VK_NULL_HANDLE);
@@ -717,13 +727,20 @@ void VkRenderer::destroySwapchain() {
     if (swapchain_) { vkDestroySwapchainKHR(device_, swapchain_, nullptr); swapchain_ = VK_NULL_HANDLE; }
 }
 
-bool VkRenderer::initWindow(ANativeWindow* window) {
-    window_ = window;
-
+bool VkRenderer::createSurface() {
     VkAndroidSurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
-    sci.window = window;
+    sci.window = window_;
     VK_CHECK(vkCreateAndroidSurfaceKHR(instance_, &sci, nullptr, &surface_));
+    return true;
+}
 
+void VkRenderer::destroySurface() {
+    if (surface_) { vkDestroySurfaceKHR(instance_, surface_, nullptr); surface_ = VK_NULL_HANDLE; }
+}
+
+bool VkRenderer::setupForWindow() {
+    swapchainReady_ = false;
+    if (deviceBroken_) destroyDeviceObjects();
     if (!ensureDevice()) return false;
     if (!createSwapchain()) return false;
     if (pipeline_ == VK_NULL_HANDLE) {
@@ -734,24 +751,46 @@ bool VkRenderer::initWindow(ANativeWindow* window) {
     return true;
 }
 
+bool VkRenderer::initWindow(ANativeWindow* window) {
+    window_ = window;
+    if (!createSurface()) return false;
+    return setupForWindow();
+}
+
+void VkRenderer::tryRecover() {
+    if (!window_ || swapchainReady_) return;
+    if (deviceBroken_) {
+        destroySwapchain();
+        destroySurface();
+    }
+    if (surface_ == VK_NULL_HANDLE && !createSurface()) return;
+    setupForWindow();
+}
+
+void VkRenderer::stopRendering(const char* what, VkResult r) {
+    LOGE("%s failed %d; rendering stopped until the device is rebuilt", what, r);
+    swapchainReady_ = false;
+    deviceBroken_ = true;
+}
+
 void VkRenderer::termWindow() {
     swapchainReady_ = false;
     destroySwapchain();
-    if (surface_) { vkDestroySurfaceKHR(instance_, surface_, nullptr); surface_ = VK_NULL_HANDLE; }
+    destroySurface();
     window_ = nullptr;
 }
 
 // Android can invalidate the surface without destroying the window (e.g. a
 // projected-display disconnect). Rebuild the surface from the live window;
-// the swapchain self-heal at the top of drawFrame rebuilds the rest.
+// the swapchain self-heal at the top of drawFrame rebuilds the rest. On
+// failure the renderer is left not-ready with no surface, and the main loop's
+// recovery timer retries rather than the next frame trusting a null surface.
 bool VkRenderer::recreateSurface() {
     if (!window_) return false;
     LOGW("Surface lost, recreating");
     destroySwapchain();
-    if (surface_) { vkDestroySurfaceKHR(instance_, surface_, nullptr); surface_ = VK_NULL_HANDLE; }
-    VkAndroidSurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
-    sci.window = window_;
-    VK_CHECK(vkCreateAndroidSurfaceKHR(instance_, &sci, nullptr, &surface_));
+    destroySurface();
+    if (!createSurface()) { swapchainReady_ = false; return false; }
     return true;
 }
 
@@ -834,7 +873,8 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
     if (frameCount_++ % 12 == 0) {
         VkResult cr = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_, surface_, &caps);
         if (cr == VK_ERROR_SURFACE_LOST_KHR) {
-            if (!recreateSurface()) return;
+            recreateSurface();
+            return;
         } else if (cr == VK_SUCCESS &&
             caps.currentExtent.width != 0xFFFFFFFF &&
             caps.currentExtent.width != 0 && caps.currentExtent.height != 0 &&
@@ -852,7 +892,8 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
     // or freezing until the next INIT_WINDOW.
     if (swapchain_ == VK_NULL_HANDLE && !createSwapchain()) return;
 
-    vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
+    VkResult fr = vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
+    if (fr != VK_SUCCESS) { stopRendering("vkWaitForFences", fr); return; }
 
     uint32_t imageIndex = 0;
     VkResult r = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX,
@@ -867,7 +908,9 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
         return;
     }
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
-        LOGE("acquire failed %d", r);
+        // DEVICE_LOST and friends: spinning here would peg a core logging the
+        // same error; the device gets rebuilt by tryRecover().
+        stopRendering("vkAcquireNextImageKHR", r);
         return;
     }
 
@@ -887,10 +930,9 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
     VkResult sr = vkQueueSubmit(queue_, 1, &si, inFlight_[frame_]);
     if (sr != VK_SUCCESS) {
         // The fence was just reset and this failed submit will never signal
-        // it; waiting on it next frame would block the main thread forever
-        // (ANR). Halt rendering — the next INIT_WINDOW rebuilds everything.
-        LOGE("vkQueueSubmit failed %d, halting rendering", sr);
-        swapchainReady_ = false;
+        // it, and imageAvailable_ is signalled but never waited: both are
+        // device-level objects, so the sync state has to be rebuilt.
+        stopRendering("vkQueueSubmit", sr);
         return;
     }
 
@@ -909,14 +951,15 @@ void VkRenderer::drawFrame(const std::vector<DrawCmd>& cmds, const float clear[3
         firstFramePresented_ = true;
         LOGI("First frame presented");
     }
+    frame_ = (frame_ + 1) % framesInFlight();
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) {
         destroySwapchain();
         createSwapchain();  // failure is retried at the top of the next frame
     } else if (r == VK_ERROR_SURFACE_LOST_KHR) {
         recreateSurface();
+    } else if (r != VK_SUCCESS) {
+        stopRendering("vkQueuePresentKHR", r);
     }
-
-    frame_ = (frame_ + 1) % framesInFlight();
 }
 
 // Destroy everything ensureDevice creates, in reverse order. Called on the
@@ -944,19 +987,25 @@ void VkRenderer::teardownDevice() {
     vkDestroyDevice(device_, nullptr);
     device_ = VK_NULL_HANDLE;
     queue_ = VK_NULL_HANDLE;
+    phys_ = VK_NULL_HANDLE;
+    frame_ = 0;
     deviceReady_ = false;
+    deviceBroken_ = false;
+}
+
+void VkRenderer::destroyDeviceObjects() {
+    if (!device_) return;
+    vkDeviceWaitIdle(device_);   // may report DEVICE_LOST; destroying is still legal
+    destroySwapchain();
+    if (renderPass_) { vkDestroyRenderPass(device_, renderPass_, nullptr); renderPass_ = VK_NULL_HANDLE; }
+    if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
+    teardownDevice();
 }
 
 void VkRenderer::cleanup() {
-    if (device_) {
-        vkDeviceWaitIdle(device_);
-        destroySwapchain();
-        if (renderPass_) { vkDestroyRenderPass(device_, renderPass_, nullptr); renderPass_ = VK_NULL_HANDLE; }
-        if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
-        teardownDevice();
-    }
+    destroyDeviceObjects();
     // Surface and instance exist independently of the device (a window may
     // never have arrived): destroy them even when the device was never made.
-    if (surface_) { vkDestroySurfaceKHR(instance_, surface_, nullptr); surface_ = VK_NULL_HANDLE; }
+    destroySurface();
     if (instance_) { vkDestroyInstance(instance_, nullptr); instance_ = VK_NULL_HANDLE; }
 }
