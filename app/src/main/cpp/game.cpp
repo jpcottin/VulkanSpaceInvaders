@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <unistd.h>
 
 // ---- level tuning (1..10, easy -> hard) ----
 static int clampLevel(int L) { return L < 1 ? 1 : (L > 10 ? 10 : L); }
@@ -161,14 +162,8 @@ bool Game::fireHeld() const {
 void Game::setGlassesActive(bool v) {
     if (v == glassesActive_) return;
     glassesActive_ = v;
-    if (audio_) {
-        if (v) {
-            audio_->setSaucer(false);
-            audio_->setMusicEnabled(false);
-        } else if (state_ == PLAYING || state_ == LEVEL_CLEAR) {
-            audio_->setMusicEnabled(soundEnabled_);
-        }
-    }
+    if (v && audio_) audio_->setSaucer(false);
+    syncMusic();
 }
 
 void Game::onPointerDown(int id, float x, float y) {
@@ -197,6 +192,38 @@ void Game::onPointersCancel() {
 
 static const uint32_t kHsMagic = 0x53494E56u; // "SINV"
 
+// On-disk layout of highscores.bin (little-endian, fixed size).
+struct HighScoreFile {
+    uint32_t magic, count;
+    struct { int64_t score; int32_t level; } e[Game::kMaxScores];
+};
+
+// Write `buf` to `path` atomically: a crash between truncate and write can't
+// leave a half-written file behind, and the loader would otherwise discard
+// the short file and the next save would wipe the table.
+static void writeFileAtomic(const char* path, const void* buf, size_t len) {
+    char tmp[600];
+    if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) return;
+    FILE* f = fopen(tmp, "wb");
+    if (!f) return;
+    bool ok = fwrite(buf, len, 1, f) == 1;
+    // fsync before the rename: on f2fs a rename can otherwise reach disk
+    // before the data blocks, and a power loss leaves a short file that the
+    // loader discards (and the next save then overwrites with a fresh table).
+    ok = (fflush(f) == 0) && ok;
+    ok = (fsync(fileno(f)) == 0) && ok;
+    ok = (fclose(f) == 0) && ok;
+    if (!ok || rename(tmp, path) != 0) remove(tmp);
+}
+
+// Zero the screen-shake offset for the lifetime of the guard so HUD and
+// overlay elements are drawn shake-free, then restore it.
+struct ShakeOff {
+    float &x, &y, sx, sy;
+    ShakeOff(float& x_, float& y_) : x(x_), y(y_), sx(x_), sy(y_) { x = 0.0f; y = 0.0f; }
+    ~ShakeOff() { x = sx; y = sy; }
+};
+
 void Game::setDataPath(const char* path) {
     if (!path || path[0] == '\0') return;
     snprintf(dataPath_,    sizeof(dataPath_),    "%s/highscores.bin", path);
@@ -209,7 +236,7 @@ void Game::loadHighScores() {
     if (dataPath_[0] == '\0') return;
     FILE* f = fopen(dataPath_, "rb");
     if (!f) return;
-    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf{};
+    HighScoreFile buf{};
     if (fread(&buf, sizeof(buf), 1, f) == 1 && buf.magic == kHsMagic) {
         int n = (int)buf.count < kMaxScores ? (int)buf.count : kMaxScores;
         for (int i = 0; i < n; i++) {
@@ -223,45 +250,50 @@ void Game::loadHighScores() {
 // Insert a score at its rank unless the identical entry is already present.
 // Exact-duplicate skipping matters because the phone and glasses instances
 // load the same file: without it every merge would double the shared rows.
-void Game::mergeHighScore(long score, int level) {
-    if (score <= 0) return;
+int Game::mergeHighScore(long score, int level) {
+    if (score <= 0) return -1;
     for (const auto& hs : highScores_)
-        if (hs.score == score && hs.level == level) return;
+        if (hs.score == score && hs.level == level) return -1;
     int pos = kMaxScores;
     for (int i = 0; i < kMaxScores; i++)
         if (score > highScores_[i].score) { pos = i; break; }
-    if (pos == kMaxScores) return;
+    if (pos == kMaxScores) return -1;
     for (int i = kMaxScores - 1; i > pos; i--) highScores_[i] = highScores_[i - 1];
     highScores_[pos] = {score, level};
+    return pos;
+}
+
+// The other instance (phone vs glasses, same process, separate Game objects)
+// may have saved since we loaded: merge the disk table into ours so a stale
+// in-memory copy never clobbers a saved score.
+void Game::mergeDiskHighScores() {
+    if (dataPath_[0] == '\0') return;
+    FILE* rf = fopen(dataPath_, "rb");
+    if (!rf) return;
+    HighScoreFile in{};
+    if (fread(&in, sizeof(in), 1, rf) == 1 && in.magic == kHsMagic) {
+        int n = (int)in.count < kMaxScores ? (int)in.count : kMaxScores;
+        for (int i = 0; i < n; i++)
+            mergeHighScore((long)in.e[i].score, in.e[i].level);
+    }
+    fclose(rf);
 }
 
 void Game::saveHighScores() {
-    if (dataPath_[0] == '\0') return;
-    // The other instance (phone vs glasses, same process, separate Game
-    // objects) may have saved since we loaded: merge the disk table into
-    // ours first so a stale in-memory copy never clobbers a saved score.
-    FILE* rf = fopen(dataPath_, "rb");
-    if (rf) {
-        struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } in{};
-        if (fread(&in, sizeof(in), 1, rf) == 1 && in.magic == kHsMagic) {
-            int n = (int)in.count < kMaxScores ? (int)in.count : kMaxScores;
-            for (int i = 0; i < n; i++)
-                mergeHighScore((long)in.e[i].score, in.e[i].level);
-        }
-        fclose(rf);
-    }
+    mergeDiskHighScores();
+    writeHighScores();
+}
 
-    FILE* f = fopen(dataPath_, "wb");
-    if (!f) return;
-    struct { uint32_t magic, count; struct { int64_t score; int32_t level; } e[kMaxScores]; } buf{};
+void Game::writeHighScores() {
+    if (dataPath_[0] == '\0') return;
+    HighScoreFile buf{};
     buf.magic = kHsMagic;
     buf.count = kMaxScores;
     for (int i = 0; i < kMaxScores; i++) {
         buf.e[i].score = (int64_t)highScores_[i].score;
         buf.e[i].level = highScores_[i].level;
     }
-    fwrite(&buf, sizeof(buf), 1, f);
-    fclose(f);
+    writeFileAtomic(dataPath_, &buf, sizeof(buf));
 }
 
 // Re-read persisted state. The phone and glasses instances share the files;
@@ -269,6 +301,20 @@ void Game::saveHighScores() {
 void Game::reloadFromDisk() {
     loadHighScores();
     loadSettings();
+    syncMusic();   // the other instance may have toggled Sound
+}
+
+// The single rule for the music flag: it plays from the start of a round
+// through the end screen (and under a Settings overlay opened from those),
+// when sound is on, and not on the phone while the round runs on the glasses.
+// Called whenever any input changes, including when the audio engine arrives
+// after a process-death restore already started a round.
+void Game::syncMusic() {
+    if (!audio_) return;
+    State s = (state_ == SETTINGS) ? prevState_ : state_;
+    bool inRound = s != TITLE;
+    bool handedOff = glassesActive_ && controlMode_ == CONTROL_STRIP;
+    audio_->setMusicEnabled(soundEnabled_ && inRound && !handedOff);
 }
 
 // Resume a run after process death: same level, score, and lives, but a
@@ -309,13 +355,10 @@ void Game::loadSettings() {
 
 void Game::saveSettings() {
     if (settingsPath_[0] == '\0') return;
-    FILE* f = fopen(settingsPath_, "wb");
-    if (!f) return;
     struct { uint32_t magic; int32_t soundOn; int32_t autoPlay; } buf = {
         kSettingsMagic, soundEnabled_ ? 1 : 0, autoPlayActive_ ? 1 : 0
     };
-    fwrite(&buf, sizeof(buf), 1, f);
-    fclose(f);
+    writeFileAtomic(settingsPath_, &buf, sizeof(buf));
 }
 
 bool Game::isGearTap(float px, float py) const {
@@ -359,16 +402,16 @@ void Game::spawnDebris(float ax, float ay, float ar, float cr, float cg, float c
 
 void Game::checkHighScore() {
     if (score_ <= 0) return;
-    int pos = kMaxScores;
-    for (int i = 0; i < kMaxScores; i++) {
-        if (score_ > highScores_[i].score) { pos = i; break; }
-    }
-    if (pos == kMaxScores) return;
-    for (int i = kMaxScores - 1; i > pos; i--) highScores_[i] = highScores_[i - 1];
-    highScores_[pos] = {score_, level_};
+    // Same dedupe rule as the disk merge, and the rank is taken after the
+    // other instance's rows have been folded in, so the digit on the end
+    // screen matches the saved table. An exact tie with an existing row is
+    // not a new record.
+    mergeDiskHighScores();
+    int pos = mergeHighScore(score_, level_);
+    if (pos < 0) return;
     newHighScore_     = true;
     newHighScoreRank_ = pos;
-    saveHighScores();
+    writeHighScores();
 }
 
 // ── formation ────────────────────────────────────────────────────────────────
@@ -428,22 +471,28 @@ void Game::startGame() {
     tripleActive_ = false; tripleTimer_ = 0.0f;
     bonusFlashTimer_ = 0.0f;
     level_ = 1;
-    if (audio_) audio_->setMusicEnabled(soundEnabled_);
     startLevel(1);
 }
 
-void Game::startLevel(int level) {
-    level_ = clampLevel(level);
-    buildFormation();
+void Game::resetBattlefield() {
     bullets_.clear();
     bombs_.clear();
     particles_.clear();
     explosions_.clear();
     powerUps_.clear();
     saucer_ = {};
+    boss_ = {};
+    bossActive_ = false;
+    invuln_ = 0.0f;
+    if (audio_) audio_->setSaucer(false);
+}
+
+void Game::startLevel(int level) {
+    level_ = clampLevel(level);
+    buildFormation();
+    resetBattlefield();
     saucerTimer_ = frange(10.0f, 16.0f);
     bombTimer_   = 1.5f;
-    boss_ = {};
     bossActive_ = (level_ == 10);
     if (bossActive_) {
         boss_.hp = boss_.maxHp = kBossHP;
@@ -455,8 +504,8 @@ void Game::startLevel(int level) {
     fireCooldown_ = 0.0f;
     invuln_ = 1.2f;
     shakeAmt_ = 0.0f; shakeX_ = 0.0f; shakeY_ = 0.0f;
-    if (audio_) audio_->setSaucer(false);
     state_ = PLAYING;
+    syncMusic();
 }
 
 void Game::spawnPowerUp(float x, float y) {
@@ -595,15 +644,11 @@ void Game::update(float dt) {
                 buildFormation();       // rebuild the title demo wave
                 // Clear every battlefield leftover, or it renders frozen on
                 // the title screen forever (nothing updates it there).
-                bombs_.clear();
-                bullets_.clear();
-                powerUps_.clear();
-                saucer_.alive = false;
+                resetBattlefield();
                 shieldActive_ = false;
                 rapidActive_  = false;
                 tripleActive_ = false;
-                if (audio_) audio_->setSaucer(false);
-                if (audio_) audio_->setMusicEnabled(false);
+                syncMusic();
             }
             break;
         }
@@ -618,11 +663,7 @@ void Game::update(float dt) {
                 if (fabsf(wy - kSettingSoundY) < kHitH && fabsf(wx) < kHitW) {
                     soundEnabled_ = !soundEnabled_;
                     saveSettings();
-                    if (!soundEnabled_) {
-                        if (audio_) audio_->setMusicEnabled(false);
-                    } else if (prevState_ == PLAYING || prevState_ == LEVEL_CLEAR) {
-                        if (audio_) audio_->setMusicEnabled(true);
-                    }
+                    syncMusic();
                 } else if (fabsf(wy - kSettingAutoPlayY) < kHitH && fabsf(wx) < kHitW) {
                     autoPlayActive_ = !autoPlayActive_;
                     saveSettings();
@@ -942,6 +983,7 @@ void Game::updateBullets(float dt) {
                     }
                     state_ = WIN; stateTimer_ = 0.0f;
                     checkHighScore();
+                    return;   // the table is written: the rest of the volley scores nothing
                 }
                 continue;
             }
@@ -1292,23 +1334,24 @@ void Game::drawDigit(std::vector<DrawCmd>& out, int dgt, float cx, float cy,
     if (mask & 64) seg(cx, cy, hSegX, hSegY);                   // g middle
 }
 
-int Game::numDigits(int v) {
+int Game::numDigits(long v) {
     if (v <= 0) return 1;
     int n = 0;
     while (v > 0) { n++; v /= 10; }
     return n;
 }
 
-void Game::drawNumber(std::vector<DrawCmd>& out, int value, float firstCx, float cy,
+void Game::drawNumber(std::vector<DrawCmd>& out, long value, float firstCx, float cy,
                       float h, float r, float g, float b, float a) const {
     if (value < 0) value = 0;
     int n = numDigits(value);
     float w = h * 0.60f;
     float step = w * 1.45f;
-    int digits[12];
-    int tmp = value, count = 0;
+    int digits[20];   // enough for any 64-bit value
+    long tmp = value;
+    int count = 0;
     if (value == 0) { digits[count++] = 0; }
-    while (tmp > 0 && count < 12) { digits[count++] = tmp % 10; tmp /= 10; }
+    while (tmp > 0 && count < 20) { digits[count++] = (int)(tmp % 10); tmp /= 10; }
     // digits[] is reversed; draw most-significant first.
     for (int i = 0; i < n; i++) {
         int dgt = digits[n - 1 - i];
@@ -1712,20 +1755,19 @@ void Game::render(std::vector<DrawCmd>& out) {
         float alpha = bonusFlashTimer_ / 0.9f;
         int n = numDigits((int)bonusFlash_);
         float h = 0.055f, step = h * 0.60f * 1.45f;
-        drawNumber(out, (int)bonusFlash_, bonusFlashX_ - (float)(n - 1) * step * 0.5f,
+        drawNumber(out, bonusFlash_, bonusFlashX_ - (float)(n - 1) * step * 0.5f,
                    bonusFlashY_, h, 1.0f, 0.85f, 0.10f, alpha);
     }
 
     // HUD during gameplay — drawn without screen shake so it stays readable on hit.
     if (state_ == PLAYING || state_ == LEVEL_CLEAR) {
-        float savedShakeX = shakeX_, savedShakeY = shakeY_;
-        shakeX_ = 0.0f; shakeY_ = 0.0f;
+        ShakeOff noShake(shakeX_, shakeY_);
 
         float h = 0.085f;
         float w = h * 0.60f;
         float step = w * 1.45f;
         // score top-left
-        drawNumber(out, (int)score_, -asp_ + 0.06f + w * 0.5f, -0.90f, h,
+        drawNumber(out, score_, -asp_ + 0.06f + w * 0.5f, -0.90f, h,
                    1.0f, 1.0f, 1.0f, 1.0f);
         // level number top-right (yellow), right-aligned — supports 2 digits at level 10
         int nd = numDigits(level_);
@@ -1740,16 +1782,13 @@ void Game::render(std::vector<DrawCmd>& out) {
 
         drawPowerUpHUD(out);
         drawBossHealthBar(out);
-        shakeX_ = savedShakeX; shakeY_ = savedShakeY;
     }
 
     // Control strip — shake-free, active gameplay only, phone mode only (the
     // glasses touchbar has no on-screen counterpart).
     if (state_ == PLAYING && controlMode_ == CONTROL_STRIP) {
-        float savedShakeX = shakeX_, savedShakeY = shakeY_;
-        shakeX_ = 0.0f; shakeY_ = 0.0f;
+        ShakeOff noShake(shakeX_, shakeY_);
         drawControlStrip(out);
-        shakeX_ = savedShakeX; shakeY_ = savedShakeY;
     }
 
     float pulse = 0.5f + 0.5f * sinf(animTime_ * 4.0f);
@@ -1768,7 +1807,7 @@ void Game::render(std::vector<DrawCmd>& out) {
             // Rank ship icon
             drawShip(out, -asp_*0.72f, rowY[i], 0.020f, 0.0f, 1.0f);
             // Score
-            drawNumber(out, (int)highScores_[i].score, -asp_*0.50f, rowY[i], hh, pr, pg, pb, 1.0f);
+            drawNumber(out, highScores_[i].score, -asp_*0.50f, rowY[i], hh, pr, pg, pb, 1.0f);
             // Level digit (right-aligned)
             drawNumber(out, highScores_[i].level, asp_*0.62f, rowY[i], hh, pr, pg, pb, 0.80f);
         }
@@ -1780,53 +1819,24 @@ void Game::render(std::vector<DrawCmd>& out) {
         drawText(out, "LEVEL", 0.0f, -0.28f, 0.075f, 0.4f, 1.0f, 0.5f, 1.0f);
         drawNumber(out, level_, 0.0f, -0.02f, 0.42f, 0.4f, 1.0f, 0.5f, 1.0f);
     } else if (state_ == GAME_OVER) {
-        emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f,
-             0.6f, 0.05f, 0.08f, 0.32f + 0.10f * pulse);
-        int n = numDigits((int)score_);
-        float fh = endScoreHeight(n, asp_), fw = fh * 0.6f * 1.45f;
-        float firstCx = -(float)(n - 1) * fw * 0.5f;
-        // Gold pulsing score if new high score, white otherwise
-        float sr = 1.0f, sg = newHighScore_ ? (0.75f + 0.20f*pulse) : 1.0f, sb = newHighScore_ ? 0.10f : 1.0f;
-        drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
-        // Rank digit above score when it's a new high score
-        if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
-            int ri = newHighScoreRank_;
-            drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f,
-                      kPodiumCol[ri][0], kPodiumCol[ri][1], kPodiumCol[ri][2],
-                      0.65f + 0.35f * pulse);
-        }
-        drawShip(out, 0.0f, 0.5f, 0.05f, 0.0f, 0.3f + 0.6f * pulse);
+        const float tint[4] = {0.6f, 0.05f, 0.08f, 0.32f + 0.10f * pulse};
+        drawEndScreen(out, pulse, tint, 0.75f + 0.20f * pulse, 0.10f, 1.0f, 1.0f);
     } else if (state_ == WIN) {
-        emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f,
-             0.1f, 0.5f, 0.15f, 0.30f + 0.10f * pulse);
-        int n = numDigits((int)score_);
-        float fh = endScoreHeight(n, asp_), fw = fh * 0.6f * 1.45f;
-        float firstCx = -(float)(n - 1) * fw * 0.5f;
-        float sr = 1.0f, sg = newHighScore_ ? (0.80f + 0.15f*pulse) : 0.9f, sb = newHighScore_ ? 0.10f : 0.3f;
-        drawNumber(out, (int)score_, firstCx, -0.05f, fh, sr, sg, sb, 1.0f);
-        if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
-            int ri = newHighScoreRank_;
-            drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f,
-                      kPodiumCol[ri][0], kPodiumCol[ri][1], kPodiumCol[ri][2],
-                      0.65f + 0.35f * pulse);
-        }
-        drawShip(out, 0.0f, 0.5f, 0.05f, 0.0f, 0.3f + 0.6f * pulse);
+        const float tint[4] = {0.1f, 0.5f, 0.15f, 0.30f + 0.10f * pulse};
+        drawEndScreen(out, pulse, tint, 0.80f + 0.15f * pulse, 0.10f, 0.9f, 0.3f);
     }
 
     // ── "On glasses" banner — phone instance only, under the gear so
     //    Settings stays reachable to bring the game back ────────────────────
     if (glassesActive_ && controlMode_ == CONTROL_STRIP && state_ != SETTINGS) {
-        float svX = shakeX_, svY = shakeY_;
-        shakeX_ = shakeY_ = 0.0f;
+        ShakeOff noShake(shakeX_, shakeY_);
         drawOnGlassesOverlay(out);
-        shakeX_ = svX; shakeY_ = svY;
     }
 
     // ── Gear button — shake-free, top-right corner, every state but SETTINGS
     //    (and never on the glasses: Settings lives on the phone) ────────────
     if (state_ != SETTINGS && controlMode_ == CONTROL_STRIP) {
-        float svX = shakeX_, svY = shakeY_;
-        shakeX_ = shakeY_ = 0.0f;
+        ShakeOff noShake(shakeX_, shakeY_);
         float gearWX = asp_ - kGearOffsetX, gearWY = kGearWY;
         float gearA  = 0.55f + 0.12f * sinf(animTime_ * 2.0f);
         float gr = autoPlayActive_ ? 0.25f : 0.55f;
@@ -1838,16 +1848,32 @@ void Game::render(std::vector<DrawCmd>& out) {
             drawText(out, "AUTO", gearWX - 0.18f, gearWY, 0.030f,
                      0.25f, 1.00f, 0.38f, autoA);
         }
-        shakeX_ = svX; shakeY_ = svY;
     }
 
     // ── Settings overlay — drawn last so it covers everything ────────────────
     if (state_ == SETTINGS) {
-        float svX = shakeX_, svY = shakeY_;
-        shakeX_ = shakeY_ = 0.0f;
+        ShakeOff noShake(shakeX_, shakeY_);
         drawSettingsScreen(out);
-        shakeX_ = svX; shakeY_ = svY;
     }
+}
+
+void Game::drawEndScreen(std::vector<DrawCmd>& out, float pulse, const float tint[4],
+                         float scoreG, float scoreB, float plainG, float plainB) const {
+    emit(out, SHAPE_QUAD, 0.0f, 0.0f, asp_, 1.0f, 0.0f, tint[0], tint[1], tint[2], tint[3]);
+    int n = numDigits(score_);
+    float fh = endScoreHeight(n, asp_), fw = fh * 0.6f * 1.45f;
+    float firstCx = -(float)(n - 1) * fw * 0.5f;
+    // Gold pulsing score if new high score, plain otherwise
+    float sg = newHighScore_ ? scoreG : plainG, sb = newHighScore_ ? scoreB : plainB;
+    drawNumber(out, score_, firstCx, -0.05f, fh, 1.0f, sg, sb, 1.0f);
+    // Rank digit above score when it's a new high score
+    if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
+        int ri = newHighScoreRank_;
+        drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f,
+                  kPodiumCol[ri][0], kPodiumCol[ri][1], kPodiumCol[ri][2],
+                  0.65f + 0.35f * pulse);
+    }
+    drawShip(out, 0.0f, 0.5f, 0.05f, 0.0f, 0.3f + 0.6f * pulse);
 }
 
 void Game::clearColor(float out[3]) const {

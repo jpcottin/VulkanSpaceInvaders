@@ -76,13 +76,32 @@ struct Engine {
     AudioEngine  audio;
     bool instanceReady = false;
     bool focused = true;
+    // Phone vs AI-Glasses role (see android_main); the projected window may
+    // never hold window focus, so focus-driven pausing is phone-only.
+    bool glassesRole = false;
+    // Consecutive renderer recovery failures, for the retry backoff.
+    int  recoveryFailures = 0;
     double lastTime = 0.0;
+    // FPS log accumulators. Per engine, not static: the phone and glasses
+    // activities run their own android_main threads in one process.
+    float fpsAccum  = 0.0f;
+    int   fpsFrames = 0;
 };
 
 static double now_s() {
     struct timespec t{};
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
+}
+
+// A launch-unique RNG seed. Mixing the integer fields avoids the
+// double -> uint32_t conversion of a large uptime, which is undefined once
+// the value exceeds UINT32_MAX (after ~72 min on the monotonic clock) and
+// saturates to a constant on AArch64.
+static uint32_t seedFromClock() {
+    struct timespec t{};
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint32_t)t.tv_nsec ^ ((uint32_t)t.tv_sec * 2654435761u);
 }
 
 // Minimal glue save-state: enough to resume a run after process death.
@@ -99,7 +118,15 @@ static void handle_cmd(android_app* app, int32_t cmd) {
     switch (cmd) {
         case APP_CMD_INIT_WINDOW:
             if (app->window && e->instanceReady) {
-                e->renderer.initWindow(app->window);
+                if (!e->renderer.initWindow(app->window) && e->renderer.unsupported()) {
+                    // No physical device / no graphics+present queue: the
+                    // window would stay black forever, same as no instance.
+                    LOGE("Vulkan device unavailable — finishing activity");
+                    ANativeActivity_finish(app->activity);
+                    break;
+                }
+                // Any other failure is retried from the main loop's recovery timer.
+                if (!e->glassesRole && !e->focused) e->audio.pause();   // open silent, start on focus
                 e->audio.init();
                 e->game.setAudioEngine(&e->audio);
                 e->lastTime = now_s();
@@ -127,11 +154,14 @@ static void handle_cmd(android_app* app, int32_t cmd) {
         case APP_CMD_LOST_FOCUS:
             // Shade pulled, system dialog, multi-window focus change: the
             // main loop stops updating the game so lives aren't lost
-            // unattended (phone role only — see the paused check there).
+            // unattended (phone role only — see the paused check there),
+            // and the music / siren stop with it.
             e->focused = false;
+            if (!e->glassesRole) e->audio.pause();
             break;
         case APP_CMD_GAINED_FOCUS:
             e->focused = true;
+            e->audio.resume();
             // Another instance (phone <-> glasses) may have saved scores or
             // settings while we were away; adopt them instead of clobbering
             // the files with our stale startup copy on the next save.
@@ -192,7 +222,7 @@ void android_main(android_app* app) {
     engine.instanceReady = engine.renderer.initInstance();
     engine.game.setDataPath(app->activity->internalDataPath);
     // Tests keep the fixed default seed; production launches should differ.
-    engine.game.seedRng((uint32_t)(now_s() * 1e6));
+    engine.game.seedRng(seedFromClock());
 
     // Resume a run killed by the system (see SavedGame above).
     if (app->savedState && app->savedStateSize == sizeof(SavedGame)) {
@@ -216,6 +246,7 @@ void android_main(android_app* app) {
     // Phone vs AI-Glasses role: the same android_main runs for both the
     // launcher NativeActivity and GlassesGameActivity (projected display).
     const bool glassesRole = glassesIsGlassesActivity(app);
+    engine.glassesRole = glassesRole;
     if (glassesRole) {
         LOGI("Running on the glasses (touchbar controls)");
         engine.game.setControlMode(Game::CONTROL_TOUCHBAR);
@@ -242,10 +273,17 @@ void android_main(android_app* app) {
 
     engine.lastTime = now_s();
 
+    std::vector<DrawCmd> cmds;   // reused across frames: no per-frame allocation
     while (true) {
         int events;
         android_poll_source* source;
-        int timeout = engine.renderer.ready() ? 0 : -1;
+        // A renderer that lost its swapchain (or device) while the window is
+        // still up is retried on a timer rather than waiting for a window
+        // event that may never come.
+        bool recovering = engine.renderer.needsRecovery();
+        // Exponential backoff (250 ms .. 8 s) while the rebuild keeps failing.
+        int backoff = 250 << (engine.recoveryFailures < 5 ? engine.recoveryFailures : 5);
+        int timeout = engine.renderer.ready() ? 0 : (recovering ? backoff : -1);
         while (ALooper_pollOnce(timeout, nullptr, &events, (void**)&source) >= 0) {
             if (source) source->process(app, source);
             if (app->destroyRequested) {
@@ -256,6 +294,20 @@ void android_main(android_app* app) {
                 return;
             }
             timeout = 0;  // drain remaining events without blocking
+        }
+
+        if (recovering && !engine.renderer.ready()) {
+            engine.renderer.tryRecover();
+            if (engine.renderer.ready()) {
+                engine.recoveryFailures = 0;
+                engine.lastTime = now_s();
+            } else if (++engine.recoveryFailures >= 20 || engine.renderer.unsupported()) {
+                // ~2 minutes of rebuild attempts (a wedged driver after a
+                // device loss): give up the same way INIT_WINDOW does.
+                LOGE("Renderer could not be recovered — finishing activity");
+                ANativeActivity_finish(app->activity);
+                engine.recoveryFailures = 0;
+            }
         }
 
         if (engine.renderer.ready()) {
@@ -285,23 +337,21 @@ void android_main(android_app* app) {
             // projected glasses window may never hold window focus at all.
             if (glassesRole || engine.focused) engine.game.update(dt);
 
-            std::vector<DrawCmd> cmds;
+            cmds.clear();
             engine.game.render(cmds);
             float clear[3];
             engine.game.clearColor(clear);
             engine.renderer.drawFrame(cmds, clear);
 
-            static float fpsAccum  = 0.0f;
-            static int   fpsFrames = 0;
-            fpsAccum  += dt;
-            fpsFrames += 1;
-            if (fpsAccum >= 5.0f) {
+            engine.fpsAccum  += dt;
+            engine.fpsFrames += 1;
+            if (engine.fpsAccum >= 5.0f) {
                 LOGI("FPS: %.1f  |  avg frame: %.2f ms  |  draws/frame: %zu",
-                     fpsFrames / fpsAccum,
-                     fpsAccum / fpsFrames * 1000.0f,
+                     (float)engine.fpsFrames / engine.fpsAccum,
+                     engine.fpsAccum / (float)engine.fpsFrames * 1000.0f,
                      cmds.size());
-                fpsAccum  = 0.0f;
-                fpsFrames = 0;
+                engine.fpsAccum  = 0.0f;
+                engine.fpsFrames = 0;
             }
 
             if (glassesRole) {

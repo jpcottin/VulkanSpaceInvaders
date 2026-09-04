@@ -1,5 +1,5 @@
 #pragma once
-#include <functional>
+#include <memory>
 
 // Pimpl facade — callers need no Oboe headers.
 class AudioEngine {
@@ -9,6 +9,9 @@ public:
 
     bool init();
     void shutdown();
+    // Activity lost / regained focus: silence the stream without closing it.
+    void pause();
+    void resume();
 
     void triggerLaser();
     void triggerExplosion();
@@ -23,5 +26,8 @@ public:
 
 private:
     struct Impl;
-    Impl* impl_ = nullptr;
+    // Shared, not owned outright: Oboe's error thread holds a reference while
+    // it delivers onErrorAfterClose, so the Impl outlives a teardown that
+    // races a route change.
+    std::shared_ptr<Impl> impl_;
 };

@@ -220,11 +220,20 @@ boot_and_play() {
   RUN_PID="$(A shell pidof "$PKG" 2>/dev/null | tr -d '\r')"
   echo "RUN $N app pid after boot/restore: ${RUN_PID:-none}"
   echo "cycle $N: ${RUN_PID:-none}" >> "$OUT/pids.txt"
-  A shell am start -n "$PKG/android.app.NativeActivity" >/dev/null 2>&1 || true
-  for _ in $(seq 1 30); do
-    A shell dumpsys window 2>/dev/null | grep -qi "ocus.*vulkanspaceinvaders" && break
-    sleep 1
-  done
+  if [ "$N" = 1 ]; then
+    A shell am start -n "$PKG/android.app.NativeActivity" >/dev/null 2>&1 || true
+  elif [ -z "$RUN_PID" ]; then
+    # Deliberately NOT relaunched, same as the CI job this replays: the
+    # question is whether the snapshot brings the app back by itself, and a
+    # relaunch here would answer it for the emulator.
+    echo "RUN $N app survived restore: NO (process gone; left as-is)"
+  fi
+  if [ "$N" = 1 ] || [ -n "$RUN_PID" ]; then
+    for _ in $(seq 1 30); do
+      A shell dumpsys window 2>/dev/null | grep -qi "ocus.*vulkanspaceinvaders" && break
+      sleep 1
+    done
+  fi
   sleep 3
   # The TITLE screen needs a tap to start a round; auto-play only flies during
   # PLAYING. Taps are spaced out because input to an unfocused window is dropped.
@@ -259,10 +268,17 @@ boot_and_play() {
     else kill "$EMU_PID" 2>/dev/null || true; fi
     sleep 10
   fi
+  # Forget the process group only once it is really gone: the end-of-script
+  # guard relies on EMU_PGID to keep a still-running emulator's AVD alive.
   if [ -n "$EMU_PGID" ]; then
     for _ in $(seq 1 120); do kill -0 -- "-$EMU_PGID" 2>/dev/null || break; sleep 1; done
+    if kill -0 -- "-$EMU_PGID" 2>/dev/null; then
+      echo "WARNING: emulator group still alive 120s after TERM; sending KILL"
+      kill -KILL -- "-$EMU_PGID" 2>/dev/null || true
+      sleep 3
+    fi
+    kill -0 -- "-$EMU_PGID" 2>/dev/null || EMU_PGID=""
   fi
-  EMU_PGID=""
   echo "RUN $N: down $(( $(date +%s) - T_KILL ))s after the shutdown request (played ~$(( T_KILL - T_RESUME ))s)"
   LD_LIBRARY_PATH="$SDK/emulators/latest/lib64" \
     "$SDK/emulators/latest/bin/qemu-img" snapshot -l \

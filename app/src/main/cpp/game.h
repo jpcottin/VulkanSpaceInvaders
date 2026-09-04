@@ -39,6 +39,7 @@ public:
     }
 
 public:
+    static const int kMaxScores = 5;
     // Row tiers, exposed so tests can assert per-tier scoring.
     enum AlienType { ALIEN_SQUID = 0, ALIEN_CRAB = 1, ALIEN_OCTOPUS = 2 };
     enum PowerUpType { PU_SHIELD = 0, PU_RAPID = 1, PU_TRIPLE = 2 };
@@ -103,7 +104,6 @@ private:
     struct Pointer { bool active = false; float x = 0.0f, y = 0.0f; };
     struct HighScore { long score = 0; int level = 0; };
 
-    static const int kMaxScores = 5;
     static const int kCols = 8;      // invaders per row
     static const int kMaxRows = 5;   // formation height cap (level 1 has 3)
 
@@ -140,7 +140,13 @@ private:
     float controlTargetX() const;
     void loadHighScores();
     void saveHighScores();
-    void mergeHighScore(long score, int level);
+    // Returns the rank the entry was inserted at, or -1 when it was not
+    // ranked or an identical row already exists.
+    int  mergeHighScore(long score, int level);
+    void writeHighScores();
+    // Clear every battlefield entity; shared by startLevel() and the return
+    // to the title so nothing renders frozen there.
+    void resetBattlefield();
     void checkHighScore();
     void spawnDebris(float x, float y, float r, float cr, float cg, float cb);
 
@@ -151,7 +157,7 @@ private:
               float style = (float)STYLE_FLAT) const;
     void drawDigit(std::vector<DrawCmd>& out, int d, float cx, float cy,
                    float h, float r, float g, float b, float a) const;
-    void drawNumber(std::vector<DrawCmd>& out, int value, float leftX, float cy,
+    void drawNumber(std::vector<DrawCmd>& out, long value, float leftX, float cy,
                     float h, float r, float g, float b, float a) const;
     void drawLetter(std::vector<DrawCmd>& out, char ch, float cx, float cy,
                     float h, float r, float g, float b, float a) const;
@@ -170,11 +176,18 @@ private:
                          float r, float g, float b, float a) const;
     void drawOnGlassesOverlay(std::vector<DrawCmd>& out) const;
     void drawSettingsScreen(std::vector<DrawCmd>& out) const;
+    // GAME_OVER / WIN share one layout: tinted overlay, big score, rank digit.
+    void drawEndScreen(std::vector<DrawCmd>& out, float pulse, const float tint[4],
+                       float scoreG, float scoreB, float plainG, float plainB) const;
     void loadSettings();
     void saveSettings();
+    // Fold the on-disk table into ours (the other instance may have saved).
+    void mergeDiskHighScores();
+    // Push soundEnabled_ + the current state into the audio engine's music flag.
+    void syncMusic();
     void updateAutoPlay(float dt);
     bool isGearTap(float px, float py) const;
-    static int numDigits(int v);
+    static int numDigits(long v);
 
     // --- audio ---
     AudioEngine* audio_ = nullptr;
@@ -189,7 +202,7 @@ private:
     char dataPath_[512]   = {};
 
 public:
-    void setAudioEngine(AudioEngine* a) { audio_ = a; }
+    void setAudioEngine(AudioEngine* a) { audio_ = a; syncMusic(); }
     void setDataPath(const char* path);
     // Randomize the xorshift state (production only — tests rely on the fixed
     // default seed for deterministic choreography). Zero would lock xorshift
@@ -239,6 +252,10 @@ public:
     float marchSpeedForTest()     const { return marchSpeed(); }
     void  setShipXForTest(float x)      { shipX_ = x; }
     void  clearInvulnForTest()          { invuln_ = 0.0f; }
+    float invulnForTest()         const { return invuln_; }
+    bool  newHighScoreForTest()   const { return newHighScore_; }
+    float bombXForTest(int i)     const { return bombs_[i].x; }
+    float bombVxForTest(int i)    const { return bombs_[i].vx; }
     void  spawnTestBomb(float x, float y, float vy) {
         bombs_.push_back({x, y, 0.0f, vy, 0.0f, true});
     }
