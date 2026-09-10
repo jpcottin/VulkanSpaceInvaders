@@ -2,8 +2,8 @@ name: Set up Android Emulator Preview
 description: >
   Installs the Android Emulator Preview package (emulators;latest), a
   minor-versioned system image, and creates an AVD for it — plus the host
-  dependencies and console auth token the preview emulator needs on a bare
-  CI runner. Shared by the emulator-preview-* jobs so their setup cannot drift.
+  dependencies the preview emulator needs on a bare CI runner. Shared by the
+  emulator-preview-* jobs so their setup cannot drift.
 
 inputs:
   api-level:
@@ -185,26 +185,3 @@ runs:
         sudo apt-get update -qq
         sudo apt-get install -y -qq libpulse0
 
-    # The emulator console starts unauthenticated and then exposes only
-    # help/ping/auth/quit/avd -- 'kill' is not in that set, so 'adb emu kill'
-    # answers "KO: unknown command" and does nothing. The preview emulator
-    # currently READS $HOME/.emulator_console_auth_token but never creates it,
-    # and a fresh runner has no such file. Creating it here (both the emulator
-    # and adb read this same file, so the value is arbitrary) unlocks the full
-    # command set and makes 'adb emu kill' a real graceful shutdown.
-    #
-    # A fix has been proposed upstream so the emulator creates this file
-    # itself; this step already defers to it -- once a preview build ships
-    # that change, an existing token is left untouched and this becomes a
-    # no-op that can be deleted.
-    - name: Ensure emulator console auth token
-      shell: bash
-      run: |
-        TOKEN="$HOME/.emulator_console_auth_token"
-        if [ -s "$TOKEN" ]; then
-          echo "console auth token already present; leaving it untouched"
-        else
-          printf 'ciConsoleTokenForHeadlessRuns' > "$TOKEN"
-          chmod 600 "$TOKEN"
-          echo "created console auth token (workaround: preview emulator does not create one)"
-        fi
