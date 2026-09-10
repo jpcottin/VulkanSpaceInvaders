@@ -75,18 +75,6 @@ SELF_PGID="$(ps -o pgid= -p $$ | tr -d ' ')"
 
 banner() { echo; echo "################ $* ################"; }
 
-# The emulator console starts unauthenticated, where it offers only
-# help/ping/auth/quit/avd -- 'kill' and 'avd pause' are not available, so
-# 'adb emu kill' returns "KO: unknown command". The emulator reads this token
-# file but does not create it, so create it if absent. An existing token is
-# left alone.
-TOKEN="$HOME/.emulator_console_auth_token"
-if [ ! -s "$TOKEN" ]; then
-  printf 'replayConsoleToken' > "$TOKEN"
-  chmod 600 "$TOKEN"
-  echo "created $TOKEN"
-fi
-
 banner "SETUP: AVD $AVD"
 # Only an AVD this script created may be deleted at the end -- never one that
 # was already on the machine, even if -a named it explicitly.

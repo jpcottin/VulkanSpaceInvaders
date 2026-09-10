@@ -437,7 +437,7 @@ jobs:
             "ndk;29.0.14206865" 2>&1 | tail -3
 
       # Shared setup: KVM, cmdline-tools, ps16k image + AVD, the preview
-      # emulator package, libpulse, and the console auth token.
+      # emulator package, and libpulse.
       - name: Set up Android Emulator Preview
         uses: ./.github/actions/preview-emulator
 
@@ -561,7 +561,7 @@ jobs:
       # for minor-versioned packages (android-37.x); the emulator clamps that to
       # API 3 and skips the Vulkan/GLDirectMem auto-enable the ps16k images need.
       # Shared setup: KVM, cmdline-tools, ps16k image + AVD, the preview
-      # emulator package, libpulse, and the console auth token.
+      # emulator package, and libpulse.
       - name: Set up Android Emulator Preview
         uses: ./.github/actions/preview-emulator
 
@@ -573,9 +573,6 @@ jobs:
           export PATH="$SDK/platform-tools:$PATH"
           PKG=com.jpcottin.vulkanspaceinvaders
           mkdir -p "${{ github.workspace }}/screenshots"
-
-          # The console auth token that makes 'adb emu kill' work is created by
-          # the Set up Android Emulator Preview action; see it for the details.
 
           SELF_PGID="$(ps -o pgid= -p $$ | tr -d ' ')"
 

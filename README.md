@@ -275,11 +275,6 @@ KVM. Every `adb` call is pinned to the emulator it launches and shutdown is
 scoped to that emulator's process group, so it is safe to run while other
 devices or emulators are attached.
 
-The script writes `~/.emulator_console_auth_token` if you do not already have
-one. The emulator console authenticates against that file before it offers its
-full command set, including `kill` — which is how both the script and CI ask
-the emulator to shut down cleanly so that it writes its quickboot snapshot.
-
 ## License
 
 [Apache License 2.0](LICENSE).
