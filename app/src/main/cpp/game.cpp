@@ -1486,7 +1486,7 @@ void Game::drawBossHealthBar(std::vector<DrawCmd>& out) const {
     // Fill (magenta → red as health drops)
     float fr = 1.0f, fg = 0.15f, fb = 0.25f + 0.45f * progress;
     emit(out, SHAPE_QUAD, -barW + barW * progress, y, barW * progress, 0.010f, 0.0f, fr, fg, fb, 0.9f);
-    drawText(out, "BOSS", 0.0f, y + 0.040f, 0.032f, fr, fg, fb, 0.85f);
+    drawText(out, "MOTHERSHIP", 0.0f, y + 0.040f, 0.032f, fr, fg, fb, 0.85f);
 }
 
 // The touch strip below the ship: a faint backdrop, a divider line, and a
