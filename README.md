@@ -81,9 +81,9 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
 - **Invasion:** if the wave reaches the control strip, the invasion succeeds —
   **instant game over**, regardless of remaining lives.
 - **Level clear:** +100 pts ×level.
-- **Boss mothership at level 10:** a giant 16-HP saucer drifts sinusoidally
-  across the top (health bar + "BOSS" label), lobbing bombs **aimed at you**,
-  guarded by a two-row escort wave. Clearing the escort isn't enough — only
+- **Mothership at level 10:** a giant 16-HP saucer drifts sinusoidally
+  across the top (health bar + "MOTHERSHIP" label), lobbing bombs **aimed at
+  you**, guarded by a two-row escort wave. Clearing the escort isn't enough — only
   destroying the mothership wins the game (+250 pts ×level).
 - **HUD:** score (top-left) · lives as mini-ships (top-center) · level
   (top-right) · active power-ups with timer bars (left edge).
