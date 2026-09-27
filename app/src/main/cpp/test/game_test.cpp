@@ -1128,10 +1128,26 @@ TEST(AutoPlay, SteersTowardACollectiblePowerUp) {
     startPlaying(g);
     g.setAutoPlayForTest(true);
     g.setFormationYForTest(-3.0f);              // aliens too far to matter
-    g.spawnTestPowerUp(0.25f, 0.30f, (int)Game::PU_SHIELD);
+    g.spawnTestPowerUp(0.25f, 0.45f, (int)Game::PU_SHIELD);   // about to land
     g.update(0.016f);
     ASSERT_TRUE(g.aiHasTargetForTest());
     EXPECT_NEAR(g.aiTargetXForTest(), 0.25f, 0.03f);
+}
+
+TEST(AutoPlay, KeepsShootingUntilAPowerUpIsAboutToLand) {
+    Game g;
+    startPlaying(g);
+    g.setAutoPlayForTest(true);
+    g.setFormationYForTest(-3.0f);              // a wave to shoot at, no threat
+    // Dropped high up: more than two seconds of fall left. Parking under it
+    // that long (the old behaviour) wastes five volleys.
+    g.spawnTestPowerUp(0.30f, -0.20f, (int)Game::PU_SHIELD);
+    g.update(0.016f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    EXPECT_LT(g.aiTargetXForTest(), 0.20f) << "left for the power-up too early";
+    // It still gets there in time.
+    step(g, 3.5f);
+    EXPECT_TRUE(g.shieldActiveForTest());
 }
 
 TEST(AutoPlay, LeadsTheSaucer) {
@@ -1284,6 +1300,24 @@ TEST(AutoPlay, IgnoresTheSaucerWhenTheWaveIsAboutToLand) {
     g.update(0.0001f);
     ASSERT_TRUE(g.aiHasTargetForTest());
     EXPECT_NEAR(g.aiTargetXForTest(), colX(3), 0.06f);
+}
+
+TEST(AutoPlay, FiresAtAColumnOverheadOnTheWayToItsTarget) {
+    Game g;
+    startPlaying(g);
+    g.setAutoPlayForTest(true);
+    g.setFormationYForTest(-0.30f);
+    // Find where the autopilot aims for the column nearest the ship, and put
+    // the ship exactly there…
+    g.update(0.0001f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    g.setShipXForTest(g.aiTargetXForTest());
+    // …then give it a better target far away. It must steer for the saucer
+    // and still take the shot that is lined up right now.
+    g.setSaucerForTest(0.35f, 0.0f);
+    g.update(0.0001f);
+    EXPECT_NEAR(g.aiTargetXForTest(), 0.35f, 0.03f);
+    EXPECT_TRUE(g.aiFireForTest());
 }
 
 TEST(AutoPlay, HoldsThePortraitLineAtLevel6) {

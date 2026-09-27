@@ -100,9 +100,15 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
 - **Settings:** gear icon opens an overlay from any game state. Toggles:
   Sound on/off, Auto Play. Both persist across app restarts.
 - **Auto Play:** AI autopilot — dodges incoming bombs (including the boss's
-  angled shots, by predicted impact point), intercepts falling power-ups when
-  nothing is shooting at it, lead-aims the boss, the saucer and the marching
-  columns, and fires when aligned. It drives the exact same control path as a
+  angled shots, by predicted impact point), intercepts falling power-ups just
+  before they land, lead-aims the boss, the saucer and the marching columns,
+  and fires at whatever is lined up. It picks its column like a seasoned
+  player: when the wave would reach the ship before it can be cleared (a full
+  wave on a portrait phone steps down about once a second), it **clears the
+  edge columns first** — a narrower wave crosses more screen per step down —
+  and switches to the **bottom row** when that row is about to land. With room
+  to spare it simply takes the nearest column. At level 10 it shoots the
+  escort before the mothership. It drives the exact same control path as a
   finger. Activate from Settings; the gear turns green with a pulsing "AUTO"
   label while active.
 - **Foldable-aware:** fold or unfold mid-game and the layout re-adapts
@@ -193,7 +199,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-103 tests covering the formation (rows per level, march direction, edge
+114 tests covering the formation (rows per level, march direction, edge
 reversal + descent, speed-up as the wave thins, side-margin containment),
 invasion game-over (even through an active shield), alien-ship collision,
 touch-strip ship control (steer, stop-on-finger, clamping, zone boundaries),
@@ -204,14 +210,16 @@ payout, suppression during the boss fight), power-ups (pickup, shield absorb,
 shield persistence, rapid-fire cooldown + expiry, triple-shot volley count +
 exact ±8° angles + expiry, uncollected fall-through), the level-10 boss (spawn +
 HP, sine drift, aimed bombs, escort-doesn't-clear rule, kill-to-win payout, Auto
-Play targeting), level progression (level-scaled clear bonus, in-flight-bomb
+Play targeting — escort first), level progression (level-scaled clear bonus, in-flight-bomb
 wipe on clear, level clamp at 10, boss handoff, game over on zero lives,
 end-screen grace tap + title-return cleanup), process-death session restore
 (bounds-checked resume of level/score/lives), the settings state machine (gear
 tap, toggles, back button, persistence across instances), high-score
 persistence (cross-instance disk merge, exact-duplicate skip, reload-from-disk
 handoff, zero-score guard), the Auto Play AI (autonomous fire, bomb dodging,
-power-up interception, saucer lead-aiming, wave completion), and the AI-Glasses
+just-in-time power-up interception, saucer lead-aiming, column targeting — edge
+columns under descent pressure, nearest column without, bottom row when it is
+about to land — shots of opportunity, full portrait waves end to end), and the AI-Glasses
 integration (touchbar steer/fire from anywhere, strip-mode isolation, no gear on
 glasses, pure-black clear, settings row launch/inert/exit behaviour, phone
 gameplay freeze during a glasses session). Run on a connected device or

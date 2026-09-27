@@ -191,6 +191,7 @@ private:
         bool  valid       = false;  // an invader is alive
         float aimX        = 0.0f;   // lead-aimed x under the chosen column
         bool  floorUrgent = false;  // the lowest row is about to reach the ship
+        bool  linedUp     = false;  // some column is in the line of fire now
     };
     AlienTarget pickAlienTarget() const;
     bool isGearTap(float px, float py) const;

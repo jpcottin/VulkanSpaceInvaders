@@ -1155,6 +1155,7 @@ Game::AlienTarget Game::pickAlienTarget() const {
             ? travel
             : distToBounce - (travel - distToBounce);   // folds back
         aim[c] = colX(c) + (float)marchDir_ * off;
+        if (fabsf(aim[c] - shipX_) < 0.030f) out.linedUp = true;
     }
 
     // Descent model: the lowest row is `drops` edge bounces away from the
@@ -1200,10 +1201,10 @@ Game::AlienTarget Game::pickAlienTarget() const {
 
 // Drives the same control path as a finger in the control strip: it sets a
 // steering target (aiTargetX_/aiMove_) and holds the trigger (aiFire_).
-// Priorities: dodge incoming bombs > collect a power-up > hunt the saucer >
-// the invader column pickAlienTarget() chose — which outranks the saucer when
-// the wave is about to reach the ship, and the mothership for as long as any
-// of her escort is alive.
+// Priorities: dodge incoming bombs > collect a power-up that is about to
+// land > hunt the saucer > the invader column pickAlienTarget() chose — which
+// outranks the saucer when the wave is about to reach the ship, and the
+// mothership for as long as any of her escort is alive.
 void Game::updateAutoPlay(float dt) {
     // Triple shot covers a wider cone, so alignment can be looser.
     const float kAlignThresh = tripleActive_ ? 0.10f : 0.030f;
@@ -1313,7 +1314,9 @@ void Game::updateAutoPlay(float dt) {
         hasTarget = true;
     }
 
-    // 3) Power-up interception, only when nothing is shooting at us.
+    // 3) Power-up interception, only when nothing is shooting at us — and
+    //    only once the pickup is about to land: a power-up falls for two to
+    //    three seconds, and parking under it that long costs five volleys.
     const PowerUp* collect = nullptr;
     if (!threatened) {
         float bestT = 1e9f;
@@ -1324,6 +1327,7 @@ void Game::updateAutoPlay(float dt) {
             if (tFall < 0.0f) tFall = 0.0f;
             float tSteer = fabsf(pu.x - shipX_) / shipSpeed_;
             if (tSteer > tFall + 0.8f) continue;    // can't reach it before it escapes
+            if (tFall > tSteer + 0.6f) continue;    // not yet: keep shooting
             float t = tSteer > tFall ? tSteer : tFall;
             if (t < bestT) { bestT = t; collect = &pu; }
         }
@@ -1367,8 +1371,11 @@ void Game::updateAutoPlay(float dt) {
         aiMove_ = true;
     }
 
-    // Fire whenever we're lined up on something worth hitting…
+    // Fire whenever we're lined up on something worth hitting — the target,
+    // or any column that happens to be overhead on the way to it or during a
+    // dodge (every invader has to go eventually)…
     if (hasTarget && fabsf(targetX - shipX_) < kAlignThresh) aiFire_ = true;
+    if (wave.linedUp) aiFire_ = true;
     // …and at any bomb above us in our firing column: the bullet-vs-bomb
     // check in updateBullets cancels both, clearing the lane the ship is
     // dodging through (or standing in, when the dodge can't outrun it).
