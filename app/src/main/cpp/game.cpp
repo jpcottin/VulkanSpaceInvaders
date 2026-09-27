@@ -42,6 +42,8 @@ static const float kAlienHW  = 0.038f;  // alien half-width
 static const float kAlienHH  = 0.030f;  // alien half-height
 static const float kDescend  = 0.040f;  // drop per edge bounce
 static const float kSideMargin = 0.015f;
+// The last survivor of a wave marches this many times faster than a full one.
+static const float kThinWaveSpeedup = 3.5f;
 
 // The invasion succeeds (instant game over) once an alien's bottom edge reaches
 // the control strip. Aliens at the ship's altitude (0.58) collide first and cost
@@ -458,7 +460,8 @@ float Game::marchSpeed() const {
     int total = (int)aliens_.size();
     if (total == 0) return levelMarchSpeed(level_);
     float aliveFrac = (float)aliveAliens() / (float)total;
-    return levelMarchSpeed(level_) * (1.0f + 2.5f * (1.0f - aliveFrac));
+    return levelMarchSpeed(level_)
+         * (1.0f + (kThinWaveSpeedup - 1.0f) * (1.0f - aliveFrac));
 }
 
 void Game::startGame() {
@@ -1096,10 +1099,112 @@ void Game::checkLevelClear() {
 }
 
 // ---- auto-play AI ----
+
+// Which invader to shoot next. A laser only ever reaches the bottom-most
+// alien of a column, so the choice is really a choice of column:
+//  - Nearest column, while the wave is no threat: the fastest clear.
+//  - Column targeting, under descent pressure: the wave steps down every
+//    time its outermost alive column touches a side margin, so the narrower
+//    the wave, the longer each crossing and the slower the descent. Clear an
+//    edge column first (the one with fewer aliens left; nearer on a tie). On
+//    a portrait phone a full wave has almost no room to march and comes down
+//    faster than it can be shot — nearest-column targeting left its width
+//    untouched until the end and lost the race from level 5 up.
+//  - Bottom-row targeting, as a last resort: an alien level with the ship
+//    can no longer be shot, only collided with. When the lowest row is about
+//    to get there, its aliens come first — each row cleared buys two more
+//    edge bounces.
+Game::AlienTarget Game::pickAlienTarget() const {
+    AlienTarget out;
+    int bottom[kCols], count[kCols];
+    for (int c = 0; c < kCols; c++) { bottom[c] = -1; count[c] = 0; }
+    for (auto& a : aliens_) {
+        if (!a.alive || a.col < 0 || a.col >= kCols) continue;
+        count[a.col]++;
+        if (a.row > bottom[a.col]) bottom[a.col] = a.row;
+    }
+    int colMin = -1, colMax = -1, floorRow = -1, alive = 0, floorCount = 0;
+    for (int c = 0; c < kCols; c++) {
+        if (count[c] == 0) continue;
+        if (colMin < 0) colMin = c;
+        colMax = c;
+        alive += count[c];
+        if (bottom[c] > floorRow) { floorRow = bottom[c]; floorCount = 0; }
+        if (bottom[c] == floorRow) floorCount++;
+    }
+    if (colMin < 0) return out;
+    out.valid = true;
+
+    auto colX = [&](int c) {
+        return formationX_ + ((float)c - (float)(kCols - 1) * 0.5f) * kColStep;
+    };
+    // The wave reverses when its outermost alive alien reaches a side
+    // margin, so a lead can't run past the bounce point — it folds back.
+    // (A straight-line lead misses every shot near a bounce.)
+    const float edgeX = asp_ - kSideMargin - kAlienHW;
+    float distToBounce = (marchDir_ > 0) ? edgeX - colX(colMax)
+                                         : colX(colMin) + edgeX;
+    if (distToBounce < 0.0f) distToBounce = 0.0f;
+    const float v = marchSpeed();
+    float aim[kCols] = {};
+    for (int c = 0; c < kCols; c++) {
+        if (count[c] == 0) continue;
+        float y      = formationY_ + (float)bottom[c] * kRowStep;
+        float travel = v * (shipY_ - y) / kBulletSpeed;
+        float off = travel <= distToBounce
+            ? travel
+            : distToBounce - (travel - distToBounce);   // folds back
+        aim[c] = colX(c) + (float)marchDir_ * off;
+        if (fabsf(aim[c] - shipX_) < 0.030f) out.linedUp = true;
+    }
+
+    // Descent model: the lowest row is `drops` edge bounces away from the
+    // ship's line; the first bounce is distToBounce away, every later one a
+    // full crossing of the room the wave has left to march in.
+    const float floorLine = shipY_ - (kAlienHH + shipR_ * 0.8f);
+    float floorY = formationY_ + (float)floorRow * kRowStep;
+    float room   = 2.0f * edgeX - (float)(colMax - colMin) * kColStep;
+    if (room < 0.01f) room = 0.01f;
+    int   drops  = (int)ceilf((floorLine - floorY) / kDescend);
+    float path   = drops <= 0 ? 0.0f : distToBounce + (float)(drops - 1) * room;
+    const float cooldown = rapidActive_ ? kRapidCooldown : kFireCooldown;
+
+    // Bottom row: urgent once it would arrive before its aliens can be shot
+    // one cooldown apart, plus a beat to line up. (Wider margins were
+    // measured and lose more games: they give up on narrowing too early.)
+    out.floorUrgent = path / v < (float)floorCount * cooldown + 0.8f;
+    // Pressure: the wave, kept this wide and marching at its end-of-wave
+    // speed, would reach the ship before a volley per alien clears it.
+    bool pressure = path / (levelMarchSpeed(level_) * kThinWaveSpeedup)
+                  < (float)alive * cooldown;
+
+    auto nearest = [&](bool floorOnly) {
+        int   pick = -1;
+        float best = 1e9f;
+        for (int c = 0; c < kCols; c++) {
+            if (count[c] == 0 || (floorOnly && bottom[c] != floorRow)) continue;
+            float d = fabsf(aim[c] - shipX_);
+            if (d < best) { best = d; pick = c; }
+        }
+        return pick;
+    };
+    int pick;
+    if (out.floorUrgent)  pick = nearest(true);
+    else if (!pressure)   pick = nearest(false);
+    else if (count[colMin] != count[colMax])
+        pick = count[colMin] < count[colMax] ? colMin : colMax;
+    else
+        pick = fabsf(aim[colMin] - shipX_) <= fabsf(aim[colMax] - shipX_) ? colMin : colMax;
+    out.aimX = aim[pick];
+    return out;
+}
+
 // Drives the same control path as a finger in the control strip: it sets a
 // steering target (aiTargetX_/aiMove_) and holds the trigger (aiFire_).
-// Priorities: dodge incoming bombs > collect a power-up > hunt the saucer >
-// line up on the nearest invader column.
+// Priorities: dodge incoming bombs > collect a power-up that is about to
+// land > hunt the saucer > the invader column pickAlienTarget() chose — which
+// outranks the saucer when the wave is about to reach the ship, and the
+// mothership for as long as any of her escort is alive.
 void Game::updateAutoPlay(float dt) {
     // Triple shot covers a wider cone, so alignment can be looser.
     const float kAlignThresh = tripleActive_ ? 0.10f : 0.030f;
@@ -1182,11 +1287,19 @@ void Game::updateAutoPlay(float dt) {
         }
     }
 
-    // 2) Best shoot target: the boss (lead-aimed on its sine drift) outranks
-    //    the saucer, which outranks the nearest alien column.
+    // 2) Best shoot target. The boss level is won by killing the mothership,
+    //    but her escort still marches down on the ship while she soaks up 16
+    //    hits — so the escort goes first, then the boss (lead-aimed on her
+    //    sine drift). The saucer outranks the wave unless the wave is about
+    //    to reach the ship.
+    const AlienTarget wave = pickAlienTarget();
     bool  hasTarget = false;
     float targetX   = 0.0f;
-    if (bossActive_ && boss_.alive) {
+    if (wave.valid && (wave.floorUrgent || (bossActive_ && boss_.alive))) {
+        targetX = wave.aimX;
+        hasTarget = true;
+    }
+    if (!hasTarget && bossActive_ && boss_.alive) {
         float tFly = (shipY_ - kBossY) / kBulletSpeed;
         targetX = sinf((boss_.t + tFly) * 0.60f) * (asp_ - kBossHW - 0.05f);
         hasTarget = true;
@@ -1196,37 +1309,14 @@ void Game::updateAutoPlay(float dt) {
         float aim  = saucer_.x + saucer_.vx * tFly;
         if (fabsf(aim) < asp_ - shipScale_) { targetX = aim; hasTarget = true; }
     }
-    if (!hasTarget) {
-        // The wave reverses when its outermost alive alien reaches a side
-        // margin, so a lead can't run past the bounce point — it folds back.
-        // (The old straight-line lead missed every shot near a bounce.)
-        float minX = 1e9f, maxX = -1e9f;
-        for (auto& a : aliens_) {
-            if (!a.alive) continue;
-            float x = alienX(a);
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
-        }
-        float distToBounce = (marchDir_ > 0)
-            ? (asp_ - kSideMargin - kAlienHW) - maxX
-            : minX - (-asp_ + kSideMargin + kAlienHW);
-        if (distToBounce < 0.0f) distToBounce = 0.0f;
-        float bestDx = 1e9f;
-        for (auto& a : aliens_) {
-            if (!a.alive) continue;
-            float ax  = alienX(a);
-            float tFly = (shipY_ - alienY(a)) / kBulletSpeed;
-            float travel = marchSpeed() * tFly;
-            float off = travel <= distToBounce
-                ? travel
-                : distToBounce - (travel - distToBounce);   // folds back
-            float aim = ax + (float)marchDir_ * off;
-            float dx  = fabsf(aim - shipX_);
-            if (dx < bestDx) { bestDx = dx; targetX = aim; hasTarget = true; }
-        }
+    if (!hasTarget && wave.valid) {
+        targetX = wave.aimX;
+        hasTarget = true;
     }
 
-    // 3) Power-up interception, only when nothing is shooting at us.
+    // 3) Power-up interception, only when nothing is shooting at us — and
+    //    only once the pickup is about to land: a power-up falls for two to
+    //    three seconds, and parking under it that long costs five volleys.
     const PowerUp* collect = nullptr;
     if (!threatened) {
         float bestT = 1e9f;
@@ -1237,6 +1327,7 @@ void Game::updateAutoPlay(float dt) {
             if (tFall < 0.0f) tFall = 0.0f;
             float tSteer = fabsf(pu.x - shipX_) / shipSpeed_;
             if (tSteer > tFall + 0.8f) continue;    // can't reach it before it escapes
+            if (tFall > tSteer + 0.6f) continue;    // not yet: keep shooting
             float t = tSteer > tFall ? tSteer : tFall;
             if (t < bestT) { bestT = t; collect = &pu; }
         }
@@ -1280,8 +1371,11 @@ void Game::updateAutoPlay(float dt) {
         aiMove_ = true;
     }
 
-    // Fire whenever we're lined up on something worth hitting…
+    // Fire whenever we're lined up on something worth hitting — the target,
+    // or any column that happens to be overhead on the way to it or during a
+    // dodge (every invader has to go eventually)…
     if (hasTarget && fabsf(targetX - shipX_) < kAlignThresh) aiFire_ = true;
+    if (wave.linedUp) aiFire_ = true;
     // …and at any bomb above us in our firing column: the bullet-vs-bomb
     // check in updateBullets cancels both, clearing the lane the ship is
     // dodging through (or standing in, when the dodge can't outrun it).

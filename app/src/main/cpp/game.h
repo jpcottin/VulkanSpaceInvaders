@@ -186,6 +186,14 @@ private:
     // Push soundEnabled_ + the current state into the audio engine's music flag.
     void syncMusic();
     void updateAutoPlay(float dt);
+    // The auto-play AI's pick among the invaders (see game.cpp).
+    struct AlienTarget {
+        bool  valid       = false;  // an invader is alive
+        float aimX        = 0.0f;   // lead-aimed x under the chosen column
+        bool  floorUrgent = false;  // the lowest row is about to reach the ship
+        bool  linedUp     = false;  // some column is in the line of fire now
+    };
+    AlienTarget pickAlienTarget() const;
     bool isGearTap(float px, float py) const;
     static int numDigits(long v);
 
