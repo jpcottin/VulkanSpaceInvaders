@@ -38,6 +38,9 @@ static void tap(Game& g, float px, float py) {
 // Index of the alien at (row, col) — aliens_ is built row-major, 8 per row.
 static int slot(int row, int col) { return row * 8 + col; }
 
+// World x of column `col` while the wave is centred (formation x 0).
+static float colX(int col) { return ((float)col - 3.5f) * 0.088f; }
+
 // ── Initial state ─────────────────────────────────────────────────────────────
 
 TEST(InitialState, StartsOnTitle) {
@@ -812,6 +815,19 @@ TEST(Boss, TakesHitsAndDiesForTheWin) {
     EXPECT_EQ(g.highScoreForTest(0), g.score());
 }
 
+TEST(Boss, AutoPlayShootsTheEscortFirst) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    g.setAutoPlayForTest(true);
+    g.update(0.0001f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    // The mothership hangs over the middle of the screen, but her escort is
+    // what marches down on the ship while she soaks up 16 hits: it goes
+    // first, edge column first.
+    EXPECT_GT(fabsf(g.aiTargetXForTest()), colX(6));
+}
+
 TEST(Boss, AutoPlayTargetsTheBoss) {
     Game g;
     g.setViewport(kW, kH);
@@ -1196,6 +1212,96 @@ TEST(AutoPlay, AimNeverLeadsPastTheEdgeBounce) {
     g.update(0.016f);
     ASSERT_TRUE(g.aiHasTargetForTest());
     EXPECT_LT(g.aiTargetXForTest(), aspect() - 0.015f);
+}
+
+// ── Auto-play targeting ──────────────────────────────────────────────────────
+// A portrait phone leaves a full wave almost no room to march: it bounces —
+// and steps down — about once a second, faster than it can be shot. Which
+// column the autopilot shoots decides whether the wave reaches the ship.
+
+TEST(AutoPlay, NarrowsAWaveThatOutrunsItsLasers) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(7);                     // 5 rows, fast march
+    g.setAutoPlayForTest(true);
+    g.update(0.0001f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    // The ship starts under the middle of the wave; the nearest columns are
+    // the two centre ones. Under descent pressure it must go for an edge
+    // column instead: a narrower wave crosses more screen per step down.
+    EXPECT_GT(fabsf(g.aiTargetXForTest()), colX(6));
+}
+
+TEST(AutoPlay, FinishesTheThinnerEdgeColumn) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(7);
+    g.setAutoPlayForTest(true);
+    // Right edge column down to its last two aliens; the ship sits under the
+    // intact left edge column. Two shots narrow the wave on the right, five
+    // on the left.
+    for (int row = 2; row < 5; row++) g.killAlienForTest(slot(row, 7));
+    g.setShipXForTest(colX(0));
+    g.update(0.0001f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    EXPECT_GT(g.aiTargetXForTest(), colX(6));
+}
+
+TEST(AutoPlay, TakesTheNearestColumnWhenTheWaveIsNoThreat) {
+    Game g;
+    g.setViewport(2076, 2152);                  // unfolded foldable: room to march
+    g.startLevelForTest(1);
+    g.setAutoPlayForTest(true);
+    g.update(0.0001f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    // No descent pressure: no detour to an edge column, shoot what is overhead.
+    EXPECT_LT(fabsf(g.aiTargetXForTest() - g.shipX()), 0.088f);
+}
+
+TEST(AutoPlay, DefendsTheBottomRowWhenItIsAboutToLand) {
+    Game g;
+    startPlaying(g);                            // level 1: rows 0..2
+    g.setAutoPlayForTest(true);
+    // The bottom row survives in column 3 only, one step down away from the
+    // ship's line. The ship sits under the right edge column.
+    for (int col = 0; col < 8; col++)
+        if (col != 3) g.killAlienForTest(slot(2, col));
+    g.setFormationYForTest(0.30f);
+    g.setShipXForTest(colX(7));
+    g.update(0.0001f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    EXPECT_NEAR(g.aiTargetXForTest(), colX(3), 0.06f);
+}
+
+TEST(AutoPlay, IgnoresTheSaucerWhenTheWaveIsAboutToLand) {
+    Game g;
+    startPlaying(g);
+    g.setAutoPlayForTest(true);
+    for (int col = 0; col < 8; col++)
+        if (col != 3) g.killAlienForTest(slot(2, col));
+    g.setFormationYForTest(0.30f);
+    g.setSaucerForTest(0.35f, 0.0f);            // bonus target, far right
+    g.update(0.0001f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    EXPECT_NEAR(g.aiTargetXForTest(), colX(3), 0.06f);
+}
+
+TEST(AutoPlay, HoldsThePortraitLineAtLevel6) {
+    // End to end: full level-6 waves on a portrait phone, several seeds.
+    // Nearest-column targeting loses about one of these in three — the wave
+    // reaches the ship with a dozen invaders left.
+    for (uint32_t seed = 1; seed <= 8; seed++) {
+        Game g;
+        g.setViewport(kW, kH);
+        g.seedRng(seed * 0x9E3779B9u);
+        g.startLevelForTest(6);
+        g.setAutoPlayForTest(true);
+        for (int i = 0; i < 60 * 60 && g.isPlayingForTest(); i++)
+            g.update(1.0f / 60.0f);
+        EXPECT_TRUE(g.isLevelClearForTest())
+            << "seed " << seed << ": gameOver=" << g.isGameOverForTest()
+            << " aliens=" << g.alienCount() << " lives=" << g.lives();
+    }
 }
 
 TEST(AutoPlay, ClearsAWaveEventually) {
