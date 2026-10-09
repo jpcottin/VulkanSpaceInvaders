@@ -8,6 +8,7 @@
 | Legs | Image | Emulator channel | GPU | Gating |
 |---|---|---|---|---|
 | Native tests: API 34, 36 | `default` x86_64 | stable | swiftshader / auto | ✅ blocking |
+| Auto Play bench: seeded campaigns, portrait + landscape | host build, no emulator | — | — | ✅ blocking |
 | Smoke: API 34, 36 | `default` x86_64 | stable | swiftshader / auto | ✅ blocking |
 | Smoke: API 37.0 | `google_apis_ps16k` (16 KB page size) | stable | lavapipe | non-blocking |
 | Smoke: API 37.0 | `google_apis_ps16k` | canary (`--channel=3`) | lavapipe, auto | non-blocking |
@@ -107,10 +108,17 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
   wave on a portrait phone steps down about once a second), it **clears the
   edge columns first** — a narrower wave crosses more screen per step down —
   and switches to the **bottom row** when that row is about to land. With room
-  to spare it simply takes the nearest column. At level 10 it shoots the
-  escort before the mothership. It drives the exact same control path as a
-  finger. Activate from Settings; the gear turns green with a pulsing "AUTO"
-  label while active.
+  to spare it simply takes the nearest column. It **counts its lasers**: an
+  invader with a laser already on its way is spoken for, so the next volley
+  goes to the next invader instead of flying through an empty column (that
+  was a quarter of all volleys on a wide screen), and the same goes for the
+  saucer. A dodge lands on a spot it can keep shooting from, a column behind
+  a bomb lane is passed over for one it can reach now, a far-off saucer is
+  left to come by on its own, and a second shield is not worth the walk. At
+  level 10 it shoots the escort before the mothership. It drives the exact
+  same control path as a finger. Activate from Settings; the gear turns green
+  with a pulsing "AUTO" label while active. Every change to it is measured
+  with the [Auto Play bench](#auto-play-bench-host-build).
 - **Foldable-aware:** fold or unfold mid-game and the layout re-adapts
   instantly — no stretching (see Tech).
 - **Play on AI Glasses:** with Display Glasses paired, Settings shows a
@@ -199,7 +207,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-114 tests covering the formation (rows per level, march direction, edge
+119 tests covering the formation (rows per level, march direction, edge
 reversal + descent, speed-up as the wave thins, side-margin containment),
 invasion game-over (even through an active shield), alien-ship collision,
 touch-strip ship control (steer, stop-on-finger, clamping, zone boundaries),
@@ -219,7 +227,10 @@ persistence (cross-instance disk merge, exact-duplicate skip, reload-from-disk
 handoff, zero-score guard), the Auto Play AI (autonomous fire, bomb dodging,
 just-in-time power-up interception, saucer lead-aiming, column targeting — edge
 columns under descent pressure, nearest column without, bottom row when it is
-about to land — shots of opportunity, full portrait waves end to end), and the AI-Glasses
+about to land — shots of opportunity, laser accounting — no second laser at an
+invader one is already flying to, next column meanwhile — dodges that land on
+a firing spot, patience with a far saucer, no detour for a shield while
+shielded, full portrait waves end to end), and the AI-Glasses
 integration (touchbar steer/fire from anywhere, strip-mode isolation, no gear on
 glasses, pure-black clear, settings row launch/inert/exit behaviour, phone
 gameplay freeze during a glasses session). Run on a connected device or
@@ -236,6 +247,32 @@ emulator:
 ANDROID_SERIAL=emulator-5556 ./gradlew runNativeTests
 ```
 
+### Auto Play bench (host build)
+
+`scripts/autoplay-bench.sh` compiles `game.cpp` with the host compiler (no
+Android SDK, no emulator — `app/src/main/cpp/test/host/` stands in for
+`<android/log.h>`) and plays seeded, headless campaigns with the autopilot.
+It reports, per level and per campaign, how often the autopilot clears the
+wave, how it dies (bomb, collision, invasion), how long a clear takes, how
+long the trigger sat idle, lasers per kill and lasers lost off-screen:
+
+```bash
+scripts/autoplay-bench.sh --runs 500 --levels --campaigns     # portrait phone
+scripts/autoplay-bench.sh --width 2400 --height 1080 --campaigns   # landscape
+scripts/autoplay-bench.sh --runs 100 --levels --trace         # dump every death
+```
+
+Runs are seeded, so two builds of the same code give the same numbers and a
+change to the autopilot is a before/after comparison. CI plays 300 portrait
+and 100 landscape campaigns and fails when fewer than 95% are won. Numbers
+for the current autopilot (campaigns won / average length of a won campaign):
+
+| Screen | Before laser accounting | Now |
+|---|---|---|
+| Portrait 1080×2400, 2000 campaigns | 98.8% / 113 s | 99.2% / 99 s |
+| Foldable inner 2152×2076, 500 campaigns | 100% / 142 s | 100% / 116 s |
+| Landscape 2400×1080, 500 campaigns | 100% / 192 s | 100% / 134 s |
+
 ### Instrumented smoke test
 
 Launches the `NativeActivity` on a connected device, waits 4 s for Vulkan to
@@ -248,7 +285,7 @@ screenshot:
 
 ## CI/CD
 
-GitHub Actions runs on every push and pull request to `main`. The first three
+GitHub Actions runs on every push and pull request to `main`. The first four
 jobs gate merges. The last four explore newer Android emulator tooling and are
 marked `continue-on-error`, so a preview package that moves underneath us
 reports its findings without ever blocking a PR.
@@ -256,7 +293,8 @@ reports its findings without ever blocking a PR.
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs the 103 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Native Tests** | Runs the 119 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Auto Play bench** | Builds `game.cpp` on the host and plays 300 portrait and 100 landscape seeded campaigns with the autopilot; fails when fewer than 95% are won | — |
 | **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators and captures an in-game screenshot via `UiAutomation`. The test asserts the activity is RESUMED **and** that the renderer logged `Swapchain ready`, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking legs on API 37.0 and 37.1 (`google_apis_ps16k`, 16 KB pages) across the lavapipe and auto GPU backends, from both the stable and canary channels | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
 | **Android CLI experiment** | Drives the same instrumented test through the `android` CLI — SDK install, AVD creation, boot and teardown — instead of `sdkmanager`/`avdmanager` plus the emulator-runner action | `cli-smoke-*` |
 | **Emulator Preview** | Boots the Android Emulator Preview package (`emulators;latest`, which installs alongside the stable emulator under `emulators/latest/`) and runs the instrumented test against it | `preview-smoke-*` |

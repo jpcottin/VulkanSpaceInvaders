@@ -1150,6 +1150,105 @@ TEST(AutoPlay, KeepsShootingUntilAPowerUpIsAboutToLand) {
     EXPECT_TRUE(g.shieldActiveForTest());
 }
 
+TEST(AutoPlay, DoesNotFireAtAnInvaderALaserIsAlreadyOnItsWayTo) {
+    Game g;
+    startPlaying(g);
+    g.setAutoPlayForTest(true);
+    // One invader left, high up: its laser flies for longer than the
+    // cooldown, so the trigger comes back while the first laser is still in
+    // the air. The second laser used to fly through an empty column.
+    for (int i = 0; i < g.alienTotalForTest(); i++)
+        if (i != slot(2, 3)) g.killAlienForTest(i);
+    g.setFormationYForTest(-0.90f);
+    g.setShipXForTest(g.alienXForTest(slot(2, 3)));
+    for (int i = 0; i < 60 && g.bulletCount() == 0; i++) g.update(1.0f / 60.0f);
+    ASSERT_EQ(g.bulletCount(), 1);
+    for (int i = 0; i < 60 && !g.fireReadyForTest(); i++) g.update(1.0f / 60.0f);
+    ASSERT_TRUE(g.fireReadyForTest());
+    ASSERT_EQ(g.alienCount(), 1) << "the first laser should still be in flight";
+    EXPECT_FALSE(g.aiFireForTest());
+    EXPECT_EQ(g.bulletCount(), 1);
+    for (int i = 0; i < 120 && g.alienCount() > 0; i++) g.update(1.0f / 60.0f);
+    EXPECT_EQ(g.alienCount(), 0);
+    EXPECT_EQ(g.shotsFiredForTest(), 1);
+}
+
+TEST(AutoPlay, MovesOnToTheNextColumnWhileItsLaserIsInFlight) {
+    Game g;
+    startPlaying(g);
+    g.setAutoPlayForTest(true);
+    // Two invaders, one per column. Once a laser is on its way to the first,
+    // the second is the target — before the first one dies.
+    for (int i = 0; i < g.alienTotalForTest(); i++)
+        if (i != slot(2, 3) && i != slot(2, 5)) g.killAlienForTest(i);
+    g.setFormationYForTest(-0.90f);
+    g.setShipXForTest(g.alienXForTest(slot(2, 3)));
+    for (int i = 0; i < 60 && g.bulletCount() == 0; i++) g.update(1.0f / 60.0f);
+    ASSERT_EQ(g.bulletCount(), 1);
+    ASSERT_EQ(g.alienCount(), 2);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    EXPECT_GT(g.aiTargetXForTest(), g.alienXForTest(slot(2, 3)) + 0.05f)
+        << "still aiming at the column that has a laser coming";
+}
+
+TEST(AutoPlay, DodgesOntoASpotItCanShootFrom) {
+    Game g;
+    startPlaying(g);
+    g.setAutoPlayForTest(true);
+    // One column left. The ship sits a dodge step left of that column's
+    // aim point with a bomb coming straight down on it: both ways out are
+    // equally safe, but only the right one lands under the column.
+    for (int i = 0; i < g.alienTotalForTest(); i++)
+        if (i % 8 != 4) g.killAlienForTest(i);
+    g.update(0.0001f);                          // AI pass: learn the aim point
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    float aim = g.aiTargetXForTest();
+    g.setShipXForTest(aim - 0.16f);
+    g.spawnTestBomb(aim - 0.16f, 0.30f, 0.5f);
+    g.update(0.0001f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    EXPECT_NEAR(g.aiTargetXForTest(), aim, 0.035f);
+    // And it does not get hit on the way there.
+    g.clearInvulnForTest();
+    step(g, 1.0f);
+    EXPECT_EQ(g.lives(), 3);
+}
+
+TEST(AutoPlay, LeavesAFarSaucerToComeBy) {
+    Game g;
+    g.setViewport(2400, 1080);                  // wide: room for a long chase
+    g.triggerNewGameForTest();
+    g.setAutoPlayForTest(true);
+    g.setFormationYForTest(-3.0f);
+    g.setShipXForTest(1.5f);
+    g.setSaucerForTest(-1.0f, -0.35f);          // far off, moving away
+    g.update(0.016f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    EXPECT_GT(g.aiTargetXForTest(), 0.0f) << "chased the saucer across the screen";
+}
+
+TEST(AutoPlay, SkipsAShieldWhileShielded) {
+    Game g;
+    startPlaying(g);
+    g.setAutoPlayForTest(true);
+    g.setFormationYForTest(-3.0f);
+    g.activatePowerUpForTest((int)Game::PU_SHIELD);
+    g.spawnTestPowerUp(0.30f, 0.45f, (int)Game::PU_SHIELD);   // about to land
+    g.update(0.016f);
+    ASSERT_TRUE(g.aiHasTargetForTest());
+    EXPECT_GT(fabsf(g.aiTargetXForTest() - 0.30f), 0.05f);
+    // A rapid-fire pickup in the same spot is still worth the walk.
+    Game g2;
+    startPlaying(g2);
+    g2.setAutoPlayForTest(true);
+    g2.setFormationYForTest(-3.0f);
+    g2.activatePowerUpForTest((int)Game::PU_SHIELD);
+    g2.spawnTestPowerUp(0.30f, 0.45f, (int)Game::PU_RAPID);
+    g2.update(0.016f);
+    ASSERT_TRUE(g2.aiHasTargetForTest());
+    EXPECT_NEAR(g2.aiTargetXForTest(), 0.30f, 0.03f);
+}
+
 TEST(AutoPlay, LeadsTheSaucer) {
     Game g;
     startPlaying(g);

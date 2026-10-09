@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include <vector>
 #include <functional>
 #include "common.h"
@@ -191,9 +192,24 @@ private:
         bool  valid       = false;  // an invader is alive
         float aimX        = 0.0f;   // lead-aimed x under the chosen column
         bool  floorUrgent = false;  // the lowest row is about to reach the ship
-        bool  linedUp     = false;  // some column is in the line of fire now
+        bool  linedUp     = false;  // some open column is in the line of fire now
+        bool  shootable   = false;  // the pick has an invader no laser claims yet
+        // Per column: lead-aimed x under its lowest unclaimed invader, and
+        // whether it has one (a laser is already on the way to each claimed
+        // invader).
+        float aim[kCols]  = {};
+        bool  open[kCols] = {};
+        // True at x when some open column can be shot from there.
+        bool firingSpot(float x) const {
+            for (int c = 0; c < kCols; c++)
+                if (open[c] && fabsf(aim[c] - x) < 0.030f) return true;
+            return false;
+        }
     };
-    AlienTarget pickAlienTarget() const;
+    // `hazard(x)` is the cost of going to stand at x (incoming bombs, lanes
+    // to cross): a column whose approach is blocked is passed over for one
+    // that can be reached now.
+    AlienTarget pickAlienTarget(const std::function<float(float)>& hazard) const;
     bool isGearTap(float px, float py) const;
     static int numDigits(long v);
 
@@ -263,7 +279,15 @@ public:
     float invulnForTest()         const { return invuln_; }
     bool  newHighScoreForTest()   const { return newHighScore_; }
     float bombXForTest(int i)     const { return bombs_[i].x; }
+    float bombYForTest(int i)     const { return bombs_[i].y; }
     float bombVxForTest(int i)    const { return bombs_[i].vx; }
+    float bombVyForTest(int i)    const { return bombs_[i].vy; }
+    int   bombsForTest()          const { return (int)bombs_.size(); }
+    int   shotsFiredForTest()     const { return shotsFired_; }
+    // Trigger ready: cooldown over and below the 3-laser cap (kMaxPlayerBullets).
+    bool  fireReadyForTest()      const { return fireCooldown_ <= 0.0f && bulletCount() < 3; }
+    int   bulletsLostForTest()    const { return bulletsLost_; }
+    int   bombsShotForTest()      const { return bombsShot_; }
     void  spawnTestBomb(float x, float y, float vy) {
         bombs_.push_back({x, y, 0.0f, vy, 0.0f, true});
     }
@@ -327,6 +351,9 @@ private:
     const float shipY_ = 0.58f;
     float shipTilt_ = 0.0f;
     float fireCooldown_ = 0.0f;
+    int   shotsFired_   = 0;     // volleys fired this game (bench statistics)
+    int   bulletsLost_  = 0;     // lasers that left the screen without a hit
+    int   bombsShot_    = 0;     // lasers spent on bombs
     const float shipScale_ = 0.065f;
     const float shipR_ = 0.050f;
     const float shipSpeed_ = 1.6f;
