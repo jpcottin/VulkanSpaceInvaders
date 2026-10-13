@@ -172,6 +172,26 @@ jobs:
             disk-size: 8192M
             experimental: true
             extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
+          - api-level: '37.2'
+            suffix: canary-lavapipe
+            target: google_apis_ps16k
+            channel: canary
+            gpu: lavapipe
+            ram-size: 4096M
+            cores: 4
+            disk-size: 8192M
+            experimental: true
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
+          - api-level: '37.2'
+            suffix: canary-auto
+            target: google_apis_ps16k
+            channel: canary
+            gpu: auto
+            ram-size: 4096M
+            cores: 4
+            disk-size: 8192M
+            experimental: true
+            extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
 
     steps:
       - uses: actions/checkout@v6
