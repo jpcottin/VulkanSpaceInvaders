@@ -8,6 +8,7 @@
 | Legs | Image | Emulator channel | GPU | Gating |
 |---|---|---|---|---|
 | Native tests: API 34, 36 | `default` x86_64 | stable | swiftshader / auto | ✅ blocking |
+| Host tests | host build, no emulator | — | — | ✅ blocking |
 | Auto Play bench: seeded campaigns, portrait + landscape | host build, no emulator | — | — | ✅ blocking |
 | Smoke: API 34, 36 | `default` x86_64 | stable | swiftshader / auto | ✅ blocking |
 | Smoke: API 37.0 | `google_apis_ps16k` (16 KB page size) | stable | lavapipe | non-blocking |
@@ -248,6 +249,16 @@ emulator:
 ANDROID_SERIAL=emulator-5556 ./gradlew runNativeTests
 ```
 
+The same suite also builds and runs on the host, without a device or an
+emulator (`game.cpp` is platform-independent; `app/src/main/cpp/test/host/`
+stands in for `<android/log.h>`, Google Test comes from the NDK or
+`libgtest-dev`):
+
+```bash
+scripts/host-tests.sh                              # all tests
+scripts/host-tests.sh --gtest_filter='Settings.*'  # a subset
+```
+
 ### Auto Play bench (host build)
 
 `scripts/autoplay-bench.sh` compiles `game.cpp` with the host compiler (no
@@ -276,9 +287,9 @@ for the current autopilot (campaigns won / average length of a won campaign):
 
 ### Instrumented smoke test
 
-Launches the `NativeActivity` on a connected device, waits 4 s for Vulkan to
-initialise, asserts the activity is still `RESUMED`, and captures a
-screenshot:
+Launches the `NativeActivity` on a connected device, polls the Vulkan log for
+up to 60 s until the renderer reports `First frame presented`, asserts the
+activity is still `RESUMED`, and captures a screenshot of that verified frame:
 
 ```bash
 ./gradlew connectedAndroidTest
@@ -286,7 +297,7 @@ screenshot:
 
 ## CI/CD
 
-GitHub Actions runs on every push and pull request to `main`. The first four
+GitHub Actions runs on every push and pull request to `main`. The first five
 jobs gate merges. The last four explore newer Android emulator tooling and are
 marked `continue-on-error`, so a preview package that moves underneath us
 reports its findings without ever blocking a PR.
@@ -295,9 +306,10 @@ reports its findings without ever blocking a PR.
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
 | **Native Tests** | Runs the 119 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Host tests** | Builds `game.cpp` and the same 119 Google Test cases with the host compiler and runs them, no emulator | — |
 | **Auto Play bench** | Builds `game.cpp` on the host and plays 300 portrait and 100 landscape seeded campaigns with the autopilot; fails when fewer than 95% are won | — |
-| **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators and captures an in-game screenshot via `UiAutomation`. The test asserts the activity is RESUMED **and** that the renderer logged `Swapchain ready`, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking legs on API 37.0, 37.1 and 37.2 (`google_apis_ps16k`, 16 KB pages) across the lavapipe and auto GPU backends, from both the stable and canary channels | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
-| **Android CLI experiment** | Drives the same instrumented test through the `android` CLI — SDK install, AVD creation, boot and teardown — instead of `sdkmanager`/`avdmanager` plus the emulator-runner action | `cli-smoke-*` |
+| **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators. The test waits up to 60 s for the renderer to log `First frame presented`, asserts the activity is RESUMED and captures that frame with `screencap`, which the job pulls as the screenshot artifact, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking legs on API 37.0, 37.1 and 37.2 (`google_apis_ps16k`, 16 KB pages) across the lavapipe and auto GPU backends, from both the stable and canary channels | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
+| **Android CLI experiment** | Drives the same instrumented test through the `android` CLI — SDK install, AVD creation, boot and teardown — instead of `sdkmanager`/`avdmanager` plus the emulator-runner action | `cli-smoke-*`; `instrumented-test-report-android-cli-experiment-*` on failure |
 | **Emulator Preview** | Boots the Android Emulator Preview package (`emulators;latest`, which installs alongside the stable emulator under `emulators/latest/`) and runs the instrumented test against it | `preview-smoke-*` |
 | **Emulator Preview multi-run** | Four boot cycles against the same AVD with quickboot snapshots enabled: each cycle plays the game briefly, screenshots it, then shuts down so the emulator saves its snapshot. Checks whether a live Vulkan app survives snapshot save/restore — it does: the app keeps its pid and the game continues across cycles | `preview-multirun-screenshots`, `preview-multirun-emulator-logs` |
 | **Android CLI multi-run** | The same four-cycle snapshot experiment driven entirely by the `android` CLI (`emulator start` / `stop`, `run`, `screen capture`, `layout`) against the canary emulator. The CLI drives the SDK's emulator package rather than the preview one, so the two multi-run jobs together show how the same experiment behaves on each. The app is never relaunched after a restore, so the screenshots and the `app survived restore:` lines reflect what the snapshot actually preserved | `cli-multirun-screenshots`, `cli-multirun-logs` |
