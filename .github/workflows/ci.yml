@@ -87,6 +87,26 @@ jobs:
           emulator-boot-timeout: 900
           script: ./gradlew runNativeTests -PtestAbi=x86_64 --no-daemon
 
+  # ── Host tests: the same Google Test suite, built with the host compiler ──────
+  # game.cpp has no Android dependency beyond <android/log.h>, which
+  # app/src/main/cpp/test/host/ stands in for. Minutes faster than the
+  # emulator legs, and the first thing to fail when the game logic breaks.
+  host-tests:
+    name: Host tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Google Test sources
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgtest-dev
+
+      - name: Build and run the native tests on the host
+        run: scripts/host-tests.sh
+
   # ── Auto Play bench: host build of game.cpp, seeded autopilot campaigns ───────
   # Deterministic (seeded runs, fixed timestep), so the win-rate floor is a
   # regression guard for the autopilot, not a flake source.
@@ -575,7 +595,7 @@ jobs:
           if-no-files-found: warn
 
   # Experiment: snapshot save/restore of a live Vulkan game on the preview
-  # emulator. Three boot cycles WITHOUT -no-snapshot: each plays ~5s in
+  # emulator. Four boot cycles WITHOUT -no-snapshot: each plays ~5s in
   # auto-play, screenshots, then kills gracefully (adb emu kill) so the
   # emulator saves a snapshot. If restore preserves the running app, the three
   # screenshots show progressively later game stages.
