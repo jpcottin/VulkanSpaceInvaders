@@ -7,10 +7,10 @@
 
 | Legs | Image | Emulator channel | GPU | Gating |
 |---|---|---|---|---|
-| Native tests: API 34, 36 | `default` x86_64 | stable | swiftshader / auto | ✅ blocking |
+| Native tests: API 34, 36 | `default` x86_64 | stable | lavapipe / auto | ✅ blocking |
 | Host tests | host build, no emulator | — | — | ✅ blocking |
 | Auto Play bench: seeded campaigns, portrait + landscape | host build, no emulator | — | — | ✅ blocking |
-| Smoke: API 34, 36 | `default` x86_64 | stable | swiftshader / auto | ✅ blocking |
+| Smoke: API 34, 36 | `default` x86_64 | stable | lavapipe / auto | ✅ blocking |
 | Smoke: API 37.0 | `google_apis_ps16k` (16 KB page size) | stable | lavapipe | non-blocking |
 | Smoke: API 37.0 | `google_apis_ps16k` | canary (`--channel=3`) | lavapipe, auto | non-blocking |
 | Smoke: API 37.1 | `google_apis_ps16k` | canary | lavapipe, auto | non-blocking |
