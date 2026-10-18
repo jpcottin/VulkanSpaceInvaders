@@ -15,4 +15,7 @@ void AudioEngine::triggerLevelClear() {}
 void AudioEngine::triggerPowerUp()    {}
 void AudioEngine::triggerMarch(int)   {}
 void AudioEngine::setSaucer(bool)     {}
-void AudioEngine::setMusicEnabled(bool) {}
+// The music flag is recorded so the tests can check what the game asked for.
+bool g_stubMusicEnabled = false;
+int  g_stubMusicCalls   = 0;
+void AudioEngine::setMusicEnabled(bool on) { g_stubMusicEnabled = on; g_stubMusicCalls++; }
