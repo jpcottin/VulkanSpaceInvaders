@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -1794,6 +1795,64 @@ TEST(PowerUps, UncollectedFallsPastWithoutEffect) {
     step(g, 8.0f);                              // vy 0.30 over the full height
     EXPECT_FALSE(g.rapidActiveForTest());       // never granted its effect
     EXPECT_EQ(g.score(), before);              // and never scored
+}
+
+// ── High-score file robustness ────────────────────────────────────────────────
+// The loader must ignore a file it cannot trust and keep the in-memory table.
+
+static void writeBytes(const char* path, const void* data, size_t n) {
+    FILE* f = fopen(path, "wb");
+    ASSERT_TRUE(f != nullptr);
+    ASSERT_EQ(fwrite(data, 1, n, f), n);
+    fclose(f);
+}
+
+TEST(HighScores, FileWithWrongMagicIsIgnored) {
+    const char* dir = scratchDir();
+    char path[512];
+    snprintf(path, sizeof(path), "%s/highscores.bin", dir);
+    // A full-size record with a foreign magic and plausible entries.
+    unsigned char buf[8 + 16 * Game::kMaxScores] = {};
+    uint32_t magic = 0x454B4146u, count = Game::kMaxScores;   // "FAKE"
+    memcpy(buf, &magic, 4); memcpy(buf + 4, &count, 4);
+    for (int i = 0; i < Game::kMaxScores; i++) { int64_t s = 1000 * (i + 1); memcpy(buf + 8 + 16 * i, &s, 8); }
+    writeBytes(path, buf, sizeof(buf));
+
+    Game g; g.setViewport(kW, kH); g.setDataPath(dir);
+    for (int i = 0; i < Game::kMaxScores; i++) EXPECT_EQ(g.highScoreForTest(i), 0) << "entry " << i;
+    remove(path);
+}
+
+TEST(HighScores, TruncatedFileIsIgnored) {
+    const char* dir = scratchDir();
+    char path[512];
+    snprintf(path, sizeof(path), "%s/highscores.bin", dir);
+    // The right magic but only part of the header: the record read fails.
+    const unsigned char buf[5] = {0x56, 0x4E, 0x49, 0x53, 0x01};
+    writeBytes(path, buf, sizeof(buf));
+
+    Game g; g.setViewport(kW, kH); g.setDataPath(dir);
+    for (int i = 0; i < Game::kMaxScores; i++) EXPECT_EQ(g.highScoreForTest(i), 0) << "entry " << i;
+    remove(path);
+}
+
+TEST(HighScores, OversizedCountIsClampedToTheTable) {
+    const char* dir = scratchDir();
+    char path[512];
+    snprintf(path, sizeof(path), "%s/highscores.bin", dir);
+    // A valid record whose count claims far more entries than the table holds.
+    unsigned char buf[8 + 16 * Game::kMaxScores] = {};
+    uint32_t magic = 0x53494E56u, count = 1000;   // "SINV"
+    memcpy(buf, &magic, 4); memcpy(buf + 4, &count, 4);
+    for (int i = 0; i < Game::kMaxScores; i++) {
+        int64_t s = 500 - 100 * i; int32_t lvl = i + 1;
+        memcpy(buf + 8 + 16 * i, &s, 8); memcpy(buf + 16 + 16 * i, &lvl, 4);
+    }
+    writeBytes(path, buf, sizeof(buf));
+
+    Game g; g.setViewport(kW, kH); g.setDataPath(dir);
+    for (int i = 0; i < Game::kMaxScores; i++) EXPECT_EQ(g.highScoreForTest(i), 500 - 100 * i) << "entry " << i;
+    remove(path);
 }
 
 // ── Music ─────────────────────────────────────────────────────────────────────

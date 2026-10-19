@@ -49,7 +49,7 @@ jobs:
       matrix:
         include:
           - api-level: 34
-            gpu: swiftshader_indirect
+            gpu: lavapipe
           - api-level: 36
             gpu: auto
 
@@ -138,7 +138,7 @@ jobs:
         include:
           # Stock x86_64 legs — these gate (blocking).
           - api-level: '34'
-            gpu: swiftshader_indirect
+            gpu: lavapipe
           - api-level: '36'
             gpu: auto
           # API 37.x (16 KB page-size images); 4 GB RAM / 4 cores. channel
