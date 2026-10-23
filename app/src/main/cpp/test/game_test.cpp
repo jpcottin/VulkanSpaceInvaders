@@ -1933,3 +1933,236 @@ TEST(Music, NoEngineMeansNoCalls) {
     EXPECT_EQ(g_stubMusicCalls, before);
 }
 
+// ── Haptics ───────────────────────────────────────────────────────────────────
+// The platform layer registers a callback that buzzes the device; the game
+// fires it when the ship takes a hit and when the wave lands, nothing else.
+
+// A bomb straight onto the ship, outside any grace period.
+static void bombTheShip(Game& g) {
+    g.clearInvulnForTest();
+    g.spawnTestBomb(g.shipX(), 0.50f, 0.6f);
+    step(g, 0.5f);
+}
+
+TEST(Haptics, ABombHitBuzzesOnce) {
+    Game g;
+    int buzzes = 0;
+    g.setHapticCallback([&] { buzzes++; });
+    startPlaying(g);
+    EXPECT_EQ(buzzes, 0);
+    bombTheShip(g);
+    ASSERT_EQ(g.lives(), 2);
+    EXPECT_EQ(buzzes, 1);
+    bombTheShip(g);
+    ASSERT_EQ(g.lives(), 1);
+    EXPECT_EQ(buzzes, 2);
+}
+
+TEST(Haptics, AShieldedHitDoesNotBuzz) {
+    Game g;
+    int buzzes = 0;
+    g.setHapticCallback([&] { buzzes++; });
+    startPlaying(g);
+    g.activatePowerUpForTest((int)Game::PU_SHIELD);
+    bombTheShip(g);
+    ASSERT_EQ(g.lives(), 3);
+    ASSERT_FALSE(g.shieldActiveForTest());         // the shield took it
+    EXPECT_EQ(buzzes, 0);
+}
+
+TEST(Haptics, TheLastLifeStillBuzzes) {
+    Game g;
+    int buzzes = 0;
+    g.setHapticCallback([&] { buzzes++; });
+    startPlaying(g);
+    g.setLivesForTest(1);
+    bombTheShip(g);
+    ASSERT_TRUE(g.isGameOverForTest());
+    EXPECT_EQ(buzzes, 1);
+}
+
+TEST(Haptics, TheInvasionBuzzes) {
+    Game g;
+    int buzzes = 0;
+    g.setHapticCallback([&] { buzzes++; });
+    startPlaying(g);
+    g.setFormationYForTest(0.72f);
+    g.update(0.016f);
+    ASSERT_TRUE(g.isGameOverForTest());
+    EXPECT_EQ(buzzes, 1);
+}
+
+TEST(Haptics, ACaughtPowerUpDoesNotBuzz) {
+    Game g;
+    int buzzes = 0;
+    g.setHapticCallback([&] { buzzes++; });
+    startPlaying(g);
+    g.spawnTestPowerUp(g.shipX(), g.shipY(), (int)Game::PU_RAPID);
+    step(g, 0.2f);
+    ASSERT_TRUE(g.rapidActiveForTest());           // picked up
+    EXPECT_EQ(buzzes, 0);
+}
+
+// ── Idle screen ───────────────────────────────────────────────────────────────
+// The main loop throttles the frame rate on the static screens, and on the
+// phone for as long as the glasses play the round.
+
+TEST(IdleScreen, OnlyTheStaticScreensAreIdle) {
+    Game g;
+    g.setViewport(kW, kH);
+    EXPECT_TRUE(g.isIdleScreen());                 // TITLE
+    g.triggerNewGameForTest();
+    EXPECT_FALSE(g.isIdleScreen());                // PLAYING
+    for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
+    g.update(0.016f);
+    ASSERT_TRUE(g.isLevelClearForTest());
+    EXPECT_FALSE(g.isIdleScreen());                // LEVEL_CLEAR animates
+    step(g, 3.0f);
+    ASSERT_TRUE(g.isPlayingForTest());
+    g.setFormationYForTest(0.72f);
+    g.update(0.016f);
+    ASSERT_TRUE(g.isGameOverForTest());
+    EXPECT_TRUE(g.isIdleScreen());                 // GAME_OVER
+}
+
+TEST(IdleScreen, TheWinScreenIsIdle) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(10);
+    for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
+    g.onPointerDown(0, pxOf(0.0f), ctrlPy());
+    for (int i = 0; i < 7200 && !g.isWinForTest(); i++) {
+        g.setBossTimeForTest(0.0f);                // park the boss over the ship
+        g.activatePowerUpForTest((int)Game::PU_RAPID);
+        g.clearInvulnForTest();
+        if (!g.isPlayingForTest()) break;
+        g.update(1.0f / 60.0f);
+    }
+    ASSERT_TRUE(g.isWinForTest());
+    EXPECT_TRUE(g.isIdleScreen());
+}
+
+TEST(IdleScreen, ThePhoneIdlesWhileTheGlassesPlayAndTheGlassesDoNot) {
+    Game phone;
+    startPlaying(phone);
+    ASSERT_FALSE(phone.isIdleScreen());
+    phone.setGlassesActive(true);                  // strip control: the round went to the glasses
+    EXPECT_TRUE(phone.isIdleScreen());
+    phone.setGlassesActive(false);
+    EXPECT_FALSE(phone.isIdleScreen());
+
+    Game glasses;
+    glasses.setViewport(kW, kH);
+    glasses.setControlMode(Game::CONTROL_TOUCHBAR);
+    glasses.triggerNewGameForTest();
+    glasses.setGlassesActive(true);
+    EXPECT_FALSE(glasses.isIdleScreen());          // the instance that renders the round
+}
+
+// ── Effects ───────────────────────────────────────────────────────────────────
+
+// A bomb onto the ship, stepping one frame at a time so the test sees the
+// game right after the hit.
+static void bombTheShipFrameByFrame(Game& g) {
+    const int before = g.lives();
+    const bool shielded = g.shieldActiveForTest();
+    g.clearInvulnForTest();
+    g.spawnTestBomb(g.shipX(), 0.50f, 0.6f);
+    for (int i = 0; i < 120; i++) {
+        g.update(1.0f / 60.0f);
+        if (g.lives() < before || (shielded && !g.shieldActiveForTest())) return;
+    }
+    FAIL() << "the bomb never hit";
+}
+
+TEST(Effects, AHitShakesTheScreenThenItSettles) {
+    Game g;
+    startPlaying(g);
+    EXPECT_FLOAT_EQ(g.shakeForTest(), 0.0f);
+    bombTheShipFrameByFrame(g);
+    EXPECT_GT(g.shakeForTest(), 0.9f);             // full strength on the hit
+    step(g, 0.2f);
+    EXPECT_GT(g.shakeForTest(), 0.0f);             // still trembling
+    step(g, 1.0f);
+    EXPECT_FLOAT_EQ(g.shakeForTest(), 0.0f);       // and settled
+}
+
+TEST(Effects, AShieldedHitShakesAtHalfStrength) {
+    Game g;
+    startPlaying(g);
+    g.activatePowerUpForTest((int)Game::PU_SHIELD);
+    bombTheShipFrameByFrame(g);
+    ASSERT_EQ(g.lives(), 3);
+    EXPECT_NEAR(g.shakeForTest(), 0.5f, 0.01f);
+}
+
+TEST(Effects, ANewLevelStartsStill) {
+    Game g;
+    startPlaying(g);
+    bombTheShipFrameByFrame(g);
+    ASSERT_GT(g.shakeForTest(), 0.0f);
+    g.startLevelForTest(2);
+    EXPECT_FLOAT_EQ(g.shakeForTest(), 0.0f);
+}
+
+TEST(Effects, ACaughtPowerUpFlashesItsValueWhereItWasCaughtThenFades) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.startLevelForTest(3);
+    EXPECT_FLOAT_EQ(g.bonusFlashTimerForTest(), 0.0f);
+    g.spawnTestPowerUp(g.shipX() + 0.02f, g.shipY(), (int)Game::PU_TRIPLE);
+    g.update(1.0f / 60.0f);
+    ASSERT_TRUE(g.tripleActiveForTest());          // caught
+    EXPECT_EQ(g.score(), 25L * 3);
+    EXPECT_EQ(g.bonusFlashForTest(), 75L);
+    EXPECT_GT(g.bonusFlashTimerForTest(), 0.0f);
+    EXPECT_NEAR(g.bonusFlashXForTest(), 0.02f, 1e-3f);
+    EXPECT_LT(g.bonusFlashYForTest(), g.shipY());  // drawn just above the ship
+    step(g, 1.0f);
+    EXPECT_LE(g.bonusFlashTimerForTest(), 0.0f);
+}
+
+TEST(Effects, ANewGameClearsTheFlash) {
+    Game g;
+    startPlaying(g);
+    g.spawnTestPowerUp(g.shipX(), g.shipY(), (int)Game::PU_SHIELD);
+    g.update(1.0f / 60.0f);
+    ASSERT_GT(g.bonusFlashTimerForTest(), 0.0f);
+    g.triggerNewGameForTest();
+    EXPECT_FLOAT_EQ(g.bonusFlashTimerForTest(), 0.0f);
+}
+
+// ── Tally ─────────────────────────────────────────────────────────────────────
+
+TEST(Tally, ANewGameResetsEverything) {
+    Game g;
+    startPlaying(g);
+    g.setFormationYForTest(-3.0f);                 // park the wave: lasers fly off the top
+    g.onPointerDown(0, pxOf(0.0f), ctrlPy());
+    step(g, 1.0f);
+    g.onPointerUp(0);
+    ASSERT_GT(g.shotsFiredForTest(), 0);
+    ASSERT_GT(g.bulletsLostForTest(), 0);
+    g.activatePowerUpForTest((int)Game::PU_RAPID);
+    g.setScoreForTest(640);
+    g.setLivesForTest(1);
+    bombTheShip(g);
+    ASSERT_TRUE(g.isGameOverForTest());
+    step(g, 1.0f);
+    tap(g, kW * 0.5f, kH * 0.5f);                  // to the title
+    g.update(0.016f);
+    ASSERT_TRUE(g.inTitleForTest());
+    tap(g, kW * 0.5f, kH * 0.5f);                  // and into a new round
+    g.update(0.016f);
+    ASSERT_TRUE(g.isPlayingForTest());
+    EXPECT_EQ(g.level(), 1);
+    EXPECT_EQ(g.lives(), 3);
+    EXPECT_EQ(g.score(), 0L);
+    EXPECT_EQ(g.shotsFiredForTest(), 0);
+    EXPECT_EQ(g.bulletsLostForTest(), 0);
+    EXPECT_EQ(g.bombsShotForTest(), 0);
+    EXPECT_FALSE(g.rapidActiveForTest());
+    EXPECT_FALSE(g.newHighScoreForTest());
+    EXPECT_EQ(g.bulletCount(), 0);
+    EXPECT_EQ(g.bombCount(), 0);
+}

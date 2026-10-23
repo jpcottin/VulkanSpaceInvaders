@@ -277,6 +277,12 @@ public:
     void  setShipXForTest(float x)      { shipX_ = x; }
     void  clearInvulnForTest()          { invuln_ = 0.0f; }
     float invulnForTest()         const { return invuln_; }
+    void  setLivesForTest(int n)        { lives_ = n; }
+    float shakeForTest()          const { return shakeAmt_; }
+    long  bonusFlashForTest()     const { return bonusFlash_; }
+    float bonusFlashTimerForTest() const { return bonusFlashTimer_; }
+    float bonusFlashXForTest()    const { return bonusFlashX_; }
+    float bonusFlashYForTest()    const { return bonusFlashY_; }
     bool  newHighScoreForTest()   const { return newHighScore_; }
     float bombXForTest(int i)     const { return bombs_[i].x; }
     float bombYForTest(int i)     const { return bombs_[i].y; }

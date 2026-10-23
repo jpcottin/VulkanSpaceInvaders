@@ -209,7 +209,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-128 tests covering the formation (rows per level, march direction, edge
+142 tests covering the formation (rows per level, march direction, edge
 reversal + descent, speed-up as the wave thins, side-margin containment),
 invasion game-over (even through an active shield), alien-ship collision,
 touch-strip ship control (steer, stop-on-finger, clamping, zone boundaries),
@@ -232,7 +232,12 @@ columns under descent pressure, nearest column without, bottom row when it is
 about to land — shots of opportunity, laser accounting — no second laser at an
 invader one is already flying to, next column meanwhile — dodges that land on
 a firing spot, patience with a far saucer, no detour for a shield while
-shielded, full portrait waves end to end), and the AI-Glasses
+shielded, full portrait waves end to end), the player feedback (the haptic
+buzz on a hit, the invasion and the last life but not on a shielded hit or a
+pickup; the hit shake at full strength, half under a shield, settling within
+a second and reset by a new level; the bonus flash where the power-up was
+caught; the idle-screen flag per state and during a glasses session; the tally
+reset by a new game), and the AI-Glasses
 integration (touchbar steer/fire from anywhere, strip-mode isolation, no gear on
 glasses, pure-black clear, settings row launch/inert/exit behaviour, phone
 gameplay freeze during a glasses session). Run on a connected device or
@@ -305,8 +310,8 @@ reports its findings without ever blocking a PR.
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs the 128 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
-| **Host tests** | Builds `game.cpp` and the same 128 Google Test cases with the host compiler and runs them, no emulator | — |
+| **Native Tests** | Runs the 142 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Host tests** | Builds `game.cpp` and the same 142 Google Test cases with the host compiler and runs them, no emulator | — |
 | **Auto Play bench** | Builds `game.cpp` on the host and plays 300 portrait and 100 landscape seeded campaigns with the autopilot; fails when fewer than 95% are won | — |
 | **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators. The test waits up to 60 s for the renderer to log `First frame presented`, asserts the activity is RESUMED and captures that frame with `screencap`, which the job pulls as the screenshot artifact, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking legs on API 37.0, 37.1 and 37.2 (`google_apis_ps16k`, 16 KB pages) across the lavapipe and auto GPU backends, from both the stable and canary channels | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
 | **Android CLI experiment** | Drives the same instrumented test through the `android` CLI — SDK install, AVD creation, boot and teardown — instead of `sdkmanager`/`avdmanager` plus the emulator-runner action | `cli-smoke-*`; `instrumented-test-report-android-cli-experiment-*` on failure |
