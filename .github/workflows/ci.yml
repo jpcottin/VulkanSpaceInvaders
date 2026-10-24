@@ -483,7 +483,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api-level: ['37.0', '37.2']
+        api-level: ['37.0', '37.1', '37.2']
 
     steps:
       - uses: actions/checkout@v6

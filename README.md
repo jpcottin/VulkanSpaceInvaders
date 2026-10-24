@@ -16,7 +16,7 @@
 | Smoke: API 37.1 | `google_apis_ps16k` | canary | lavapipe, auto | non-blocking |
 | Smoke: API 37.2 | `google_apis_ps16k` | canary | lavapipe, auto | non-blocking |
 | Android CLI experiment | `google_apis_ps16k` 37.0, 37.2 | canary | emulator default | non-blocking |
-| Emulator Preview (`emulators;latest`) | `google_apis_ps16k` 37.0, 37.2 | preview package | auto | non-blocking |
+| Emulator Preview (`emulators;latest`) | `google_apis_ps16k` 37.0, 37.1, 37.2 | preview package | auto | non-blocking |
 | Emulator Preview multi-run (snapshots) | `google_apis_ps16k` 37.0 | preview package | auto | non-blocking |
 | Android CLI multi-run (snapshots) | `google_apis_ps16k` 37.0 | canary | emulator default | non-blocking |
 
