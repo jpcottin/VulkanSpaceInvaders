@@ -76,7 +76,7 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
 - **Mystery saucer:** crosses the top of the screen with a warbling siren —
   100 pts ×level, with the bonus value flashed where it died.
 - **Power-ups:** 8% drop chance on each kill: 🔵 Shield (absorbs one hit,
-  lasts until hit) · 🟡 Rapid fire (halved cooldown, 8 s with HUD timer bar) ·
+  lasts until hit) · 🟡 Rapid fire (the 0.42 s cooldown cut to 0.20 s, 8 s with HUD timer bar) ·
   🟢 Triple shot (a 3-laser volley — centre plus ±8° side lasers, 8 s).
   +25 pts ×level on pickup.
 - **Lives:** 3. Lose one to a bomb hit or an invader collision (the invader is
@@ -134,11 +134,13 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
 
 - **Pure native C++17** — Android
   [`NativeActivity`](https://developer.android.com/ndk/reference/group/native-activity)
-  with `native_app_glue`; no Kotlin, no Compose, no Java (the only Kotlin file
-  is the instrumented smoke test).
+  with `native_app_glue`; no Compose, no Java. The only Kotlin is the thin
+  AI-Glasses bridge and the activity it launches, plus the instrumented smoke test.
 - **Hand-written Vulkan 1.0 2D renderer** — one graphics pipeline, one vertex
-  buffer holding every shape, per-draw push constants (2×2 transform +
-  translation + RGBA + fill style), FIFO present, two frames in flight.
+  buffer holding every shape, per-instance vertex attributes carrying each draw's
+  2×2 transform + translation + RGBA + fill style, with consecutive draws of
+  one shape batched into a single instanced draw (no push constants, no
+  descriptors), FIFO present, two frames in flight.
 - **Sprites as geometry, no textures** — the three invader types are classic
   11×8-ish **pixel-art bitmaps expanded into triangles at startup**, two march
   frames each; the saucer is a 16×7 bitmap. The player ship is the same
@@ -164,7 +166,7 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
   equivalent.
 - **AI Glasses (Android XR projected)** — the glasses expose a secondary
   display (`ProjectionDisplay`, 30 Hz) owned by a virtual device. A ~70-line
-  Kotlin bridge (`GlassesBridge.kt`, the repo's only production JVM code) uses
+  Kotlin bridge (`GlassesBridge.kt`, with `GlassesGameActivity.kt` the repo's only production JVM code) uses
   `androidx.xr.projected` to observe pairing (`isProjectedDeviceConnected`)
   and to launch `GlassesGameActivity` — a second `NativeActivity` declared
   with `requiredDisplayCategory="xr_projected"` — onto that display. The
@@ -175,7 +177,7 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
   freezes and sleep-throttles while the glasses play so the projected
   display's encoder gets the GPU. The projected display is a 30 Hz panel, so
   the glasses instance uses a **low-latency swapchain** (minimal image count,
-  one frame in flight, MAILBOX present when available, loop paced to ~60 fps)
+  one frame in flight, MAILBOX present when available, loop paced to ~34 fps, just above the 30 Hz panel)
   — app-side input latency drops from ~3 queued FIFO frames to about one
   refresh — and renders into a **centered quarter-size viewport** (a floating
   window on the lenses, 4× fewer pixels to rasterise; draw commands are
