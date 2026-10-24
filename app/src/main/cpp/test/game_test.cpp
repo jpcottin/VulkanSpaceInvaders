@@ -1048,6 +1048,25 @@ TEST(Glasses, PhoneGameplayFreezesWhileOnGlasses) {
     EXPECT_NE(g.alienXForTest(0), alienX0);
 }
 
+TEST(Glasses, HandBackThroughSettingsGrantsTheBreather) {
+    Game g;
+    startPlaying(g);
+    step(g, 1.5f);                              // level-start grace used up
+    g.clearInvulnForTest();
+    g.setGlassesActive(true);
+    g.spawnTestBomb(0.0f, 0.50f, 0.6f);         // frozen just above the ship
+    tap(g, pxOf(aspect() - 0.062f), pyOf(-0.82f));   // gear
+    g.update(0.016f);
+    ASSERT_TRUE(g.inSettingsForTest());
+    g.setGlassesActive(false);                  // main loop mirrors the flag before update()
+    tap(g, pxOf(0.0f), pyOf(0.66f));            // BACK
+    g.update(0.016f);
+    ASSERT_TRUE(g.isPlayingForTest());
+    EXPECT_GE(g.invulnForTest(), 1.4f);
+    step(g, 0.5f);
+    EXPECT_EQ(g.lives(), 3) << "the frozen bomb landed on a player still looking up";
+}
+
 TEST(Glasses, HandBackOnTheTitleGrantsNothing) {
     Game g;
     g.setViewport(kW, kH);
@@ -1603,6 +1622,17 @@ TEST(RestoreSession, LevelClearSavesTheNextLevel) {
     EXPECT_EQ(g.saveLevel(), 2);
 }
 
+TEST(RestoreSession, APausedRoundIsStillMidGame) {
+    Game g;
+    startPlaying(g);
+    g.startLevelForTest(3);
+    tap(g, pxOf(aspect() - 0.062f), pyOf(-0.82f));   // gear
+    g.update(0.016f);
+    ASSERT_TRUE(g.inSettingsForTest());
+    EXPECT_TRUE(g.isMidGame());
+    EXPECT_EQ(g.saveLevel(), 3);
+}
+
 TEST(RestoreSession, RejectsOutOfRangeInput) {
     // The blob comes back from the OS, not from us: any out-of-range field must
     // be rejected wholesale, leaving a fresh game untouched on the title screen.
@@ -1731,6 +1761,16 @@ TEST(March, InvasionEndsGameEvenWithShield) {
     g.update(0.016f);
     EXPECT_TRUE(g.isGameOverForTest());         // a shield can't stop an invasion
     EXPECT_EQ(g.lives(), 0);
+}
+
+TEST(March, AWaveWiderThanTheWindowDoesNotStepDownEveryFrame) {
+    Game g;
+    g.setViewport(600, 2400);
+    g.triggerNewGameForTest();
+    float y0 = g.formationYForTest();
+    step(g, 1.0f);
+    EXPECT_TRUE(g.isPlayingForTest()) << "the round ended with nobody shooting";
+    EXPECT_LE(g.formationYForTest() - y0, 0.040f + 1e-4f) << "more than one descent in a second";
 }
 
 TEST(Progression, GameOverIgnoresEarlyTap) {

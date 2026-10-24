@@ -168,7 +168,8 @@ void Game::setGlassesActive(bool v) {
     // Handed back mid-round (or the glasses went away): the phone's frozen
     // round resumes with bombs in the air and the player's eyes still on
     // the way; the usual post-hit breather covers the switch.
-    if (!v && state_ == PLAYING) invuln_ = std::max(invuln_, 1.5f);
+    State s = (state_ == SETTINGS) ? prevState_ : state_;
+    if (!v && s == PLAYING) invuln_ = std::max(invuln_, 1.5f);
     syncMusic();
 }
 
@@ -331,7 +332,8 @@ void Game::syncMusic() {
 // gone and its bonus banked, so the next level is the one to restore, or the
 // player would replay the cleared wave and bank its bonus twice.
 int Game::saveLevel() const {
-    return state_ == LEVEL_CLEAR ? clampLevel(level_ + 1) : level_;
+    State s = (state_ == SETTINGS) ? prevState_ : state_;
+    return s == LEVEL_CLEAR ? clampLevel(level_ + 1) : level_;
 }
 
 void Game::restoreSession(int level, long score, int lives) {
@@ -804,7 +806,13 @@ void Game::updateFormation(float dt) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
     }
-    if (marchDir_ > 0 && maxX + kAlienHW >= asp_ - kSideMargin) {
+    const float edge = asp_ - kSideMargin;
+    if ((maxX - minX) * 0.5f + kAlienHW >= edge) {
+        // Wider than the window (a narrow free-form window, a fold's outer
+        // panel): hold the wave centred. Bouncing off both margins stepped
+        // it down every frame and ended the round in half a second.
+        formationX_ -= (maxX + minX) * 0.5f;
+    } else if (marchDir_ > 0 && maxX + kAlienHW >= edge) {
         marchDir_ = -1;
         formationY_ += kDescend;
     } else if (marchDir_ < 0 && minX - kAlienHW <= -asp_ + kSideMargin) {
