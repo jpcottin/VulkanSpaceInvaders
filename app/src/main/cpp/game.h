@@ -2,6 +2,7 @@
 #include <cmath>
 #include <vector>
 #include <functional>
+#include <atomic>
 #include "common.h"
 
 class AudioEngine;
@@ -182,6 +183,12 @@ private:
                        float scoreG, float scoreB, float plainG, float plainB) const;
     void loadSettings();
     void saveSettings();
+    // Bumped by every instance that saves the settings; an instance whose last
+    // load is behind it reloads on its next frame. The phone and the glasses
+    // run in one process, and the projected window never gets the focus event
+    // that used to be the only trigger for a reload.
+    static std::atomic<uint32_t> settingsGeneration_;
+    uint32_t settingsSeen_ = 0;
     // Fold the on-disk table into ours (the other instance may have saved).
     void mergeDiskHighScores();
     // Push soundEnabled_ + the current state into the audio engine's music flag.
