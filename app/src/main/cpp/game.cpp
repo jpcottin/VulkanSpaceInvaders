@@ -188,6 +188,7 @@ void Game::onPointerUp(int id) {
 }
 void Game::onPointersCancel() {
     for (auto& p : pointers_) p.active = false;
+    tapPending_ = false;   // a gesture the system took away was not a tap
 }
 
 // ── High score persistence ────────────────────────────────────────────────────
@@ -322,6 +323,13 @@ void Game::syncMusic() {
 // Resume a run after process death: same level, score, and lives, but a
 // fresh wave — entity positions aren't persisted. Bounds-checked because the
 // saved blob comes back from the OS, not from us.
+// The level a saved session should come back to. In LEVEL_CLEAR the wave is
+// gone and its bonus banked, so the next level is the one to restore, or the
+// player would replay the cleared wave and bank its bonus twice.
+int Game::saveLevel() const {
+    return state_ == LEVEL_CLEAR ? clampLevel(level_ + 1) : level_;
+}
+
 void Game::restoreSession(int level, long score, int lives) {
     if (level < 1 || level > 10 || lives < 1 || lives > 3 || score < 0) return;
     startGame();
@@ -592,6 +600,11 @@ void Game::update(float dt) {
         state_ = SETTINGS;
         tapped = false;
     }
+    // While the game is on the glasses the phone only shows the hand-off
+    // banner: a tap on it must not start a hidden game or dismiss an end
+    // screen nobody is looking at. Settings stays reachable (the gear tap
+    // above) and usable (its rows, including the one that hands back).
+    if (glassesActive_ && controlMode_ == CONTROL_STRIP && state_ != SETTINGS) tapped = false;
 
     switch (state_) {
         case TITLE: {

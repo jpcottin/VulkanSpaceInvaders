@@ -51,6 +51,17 @@ TEST(InitialState, StartsOnTitle) {
     EXPECT_TRUE(g.inTitleForTest());
 }
 
+TEST(Input, CancelledGestureIsNotATap) {
+    // An edge swipe the system claims arrives as a down followed by a cancel:
+    // it must not start a game.
+    Game g;
+    g.setViewport(kW, kH);
+    g.onPointerDown(0, kW * 0.5f, kH * 0.5f);
+    g.onPointersCancel();
+    g.update(0.016f);
+    EXPECT_TRUE(g.inTitleForTest());
+}
+
 TEST(InitialState, TapStartsGame) {
     Game g;
     g.setViewport(kW, kH);
@@ -990,6 +1001,34 @@ TEST(Glasses, SettingsRowExitsWhenActive) {
     EXPECT_TRUE(exited);
 }
 
+TEST(Glasses, PhoneTitleTapIsInertWhileOnGlasses) {
+    // The phone shows the hand-off banner over its title: tapping it must not
+    // start a game nobody sees.
+    Game g;
+    g.setViewport(kW, kH);
+    g.setGlassesActive(true);
+    tap(g, kW * 0.5f, kH * 0.5f);
+    g.update(0.016f);
+    EXPECT_TRUE(g.inTitleForTest());
+    g.setGlassesActive(false);                       // handed back: taps work again
+    tap(g, kW * 0.5f, kH * 0.5f);
+    g.update(0.016f);
+    EXPECT_TRUE(g.isPlayingForTest());
+}
+
+TEST(Glasses, PhoneEndScreenStaysWhileOnGlasses) {
+    Game g;
+    startPlaying(g);
+    g.setFormationYForTest(0.72f);                   // invasion: game over
+    g.update(0.016f);
+    ASSERT_TRUE(g.isGameOverForTest());
+    step(g, 0.7f);                                   // past the tap guard
+    g.setGlassesActive(true);
+    tap(g, kW * 0.5f, kH * 0.5f);
+    g.update(0.016f);
+    EXPECT_TRUE(g.isGameOverForTest());
+}
+
 TEST(Glasses, PhoneGameplayFreezesWhileOnGlasses) {
     Game g;
     startPlaying(g);
@@ -1527,6 +1566,23 @@ TEST(RestoreSession, ResumesLevelScoreAndLives) {
     EXPECT_EQ(g.score(), 4200);
     EXPECT_EQ(g.lives(), 2);
     EXPECT_EQ(g.alienRowsForTest(), 5);        // level>1 ran startLevel: 5 rows at L5
+}
+
+TEST(RestoreSession, LevelClearSavesTheNextLevel) {
+    // Killed in the interlude after a wave: the save names the level the
+    // player was about to start, whose bonus is not yet banked.
+    Game g;
+    startPlaying(g);
+    EXPECT_EQ(g.saveLevel(), 1);
+    for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
+    g.update(0.016f);
+    ASSERT_TRUE(g.isLevelClearForTest());
+    ASSERT_TRUE(g.isMidGame());
+    EXPECT_EQ(g.level(), 1);
+    EXPECT_EQ(g.saveLevel(), 2);
+    step(g, 2.0f);                                   // into level 2
+    ASSERT_TRUE(g.isPlayingForTest());
+    EXPECT_EQ(g.saveLevel(), 2);
 }
 
 TEST(RestoreSession, RejectsOutOfRangeInput) {
