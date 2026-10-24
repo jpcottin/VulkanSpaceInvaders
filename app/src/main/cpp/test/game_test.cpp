@@ -1040,10 +1040,28 @@ TEST(Glasses, PhoneGameplayFreezesWhileOnGlasses) {
     EXPECT_EQ(g.bombCount(), 1);                     // bomb frozen mid-air
     EXPECT_FLOAT_EQ(g.alienXForTest(0), alienX0);    // wave frozen
     EXPECT_EQ(g.score(), score0);
-    // Hand the game back: everything moves again.
+    // Hand the game back: everything moves again, with the usual breather
+    // so the bomb frozen mid-air does not land on a player still looking up.
     g.setGlassesActive(false);
+    EXPECT_GE(g.invulnForTest(), 1.4f);
     step(g, 1.0f);
     EXPECT_NE(g.alienXForTest(0), alienX0);
+}
+
+TEST(Glasses, HandBackOnTheTitleGrantsNothing) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.setGlassesActive(true);
+    g.setGlassesActive(false);
+    EXPECT_FLOAT_EQ(g.invulnForTest(), 0.0f);
+}
+
+TEST(Timers, TheAnimationClockStaysBounded) {
+    Game g;
+    g.setViewport(kW, kH);
+    for (int i = 0; i < 200000; i++) g.update(0.05f);   // 10000 s on the title
+    EXPECT_GE(g.animTimeForTest(), 0.0f);
+    EXPECT_LT(g.animTimeForTest(), 6300.0f);
 }
 
 TEST(Settings, PersistAcrossInstances) {
