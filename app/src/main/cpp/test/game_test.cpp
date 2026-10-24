@@ -1619,6 +1619,26 @@ static const char* scratchDir() {
 // Two Game objects share the file (as the phone and glasses instances do) but
 // never see each other's in-memory table. On save, each must fold the disk
 // table into its own so a stale copy can't clobber a score saved meanwhile.
+TEST(Settings, AToggleReachesTheOtherInstanceWithoutFocus) {
+    // The phone toggles a row while the game runs on the glasses: the glasses
+    // instance never gets a focus event, so it must notice on its own.
+    const char* dir = scratchDir();
+    char path[512];
+    snprintf(path, sizeof(path), "%s/settings.bin", dir);
+    remove(path);
+    Game phone;   phone.setViewport(kW, kH);   phone.setDataPath(dir);
+    Game glasses; glasses.setViewport(kW, kH); glasses.setDataPath(dir);
+    ASSERT_FALSE(glasses.autoPlayActiveForTest());
+    tap(phone, pxOf(aspect() - 0.062f), pyOf(-0.82f));   // gear
+    phone.update(0.016f);
+    tap(phone, pxOf(0.0f), pyOf(0.10f));                 // auto play row
+    phone.update(0.016f);
+    ASSERT_TRUE(phone.autoPlayActiveForTest());
+    glasses.update(0.016f);                              // just a frame, no focus
+    EXPECT_TRUE(glasses.autoPlayActiveForTest());
+    remove(path);
+}
+
 TEST(HighScores, SaveMergesDiskTableWithoutClobbering) {
     const char* dir = scratchDir();
     char path[512];

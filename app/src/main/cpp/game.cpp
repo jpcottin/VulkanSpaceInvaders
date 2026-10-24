@@ -340,6 +340,8 @@ void Game::restoreSession(int level, long score, int lives) {
 
 static const uint32_t kSettingsMagic = 0x53455454u;  // "SETT"
 
+std::atomic<uint32_t> Game::settingsGeneration_{0};
+
 // Gear icon world position — single source of truth for both rendering and hit-testing.
 static constexpr float kGearOffsetX = 0.062f;   // distance from right edge
 static constexpr float kGearWY      = -0.82f;   // y in world space (top area)
@@ -351,6 +353,7 @@ static constexpr float kSettingGlassesY  =  0.35f;
 static constexpr float kSettingBackY     =  0.66f;
 
 void Game::loadSettings() {
+    settingsSeen_ = settingsGeneration_.load();
     if (settingsPath_[0] == '\0') return;
     FILE* f = fopen(settingsPath_, "rb");
     if (!f) return;
@@ -369,6 +372,7 @@ void Game::saveSettings() {
         kSettingsMagic, soundEnabled_ ? 1 : 0, autoPlayActive_ ? 1 : 0
     };
     writeFileAtomic(settingsPath_, &buf, sizeof(buf));
+    settingsSeen_ = ++settingsGeneration_;
 }
 
 bool Game::isGearTap(float px, float py) const {
@@ -542,6 +546,13 @@ void Game::spawnSaucer() {
 }
 
 void Game::update(float dt) {
+    // Another instance saved the settings (the phone, while the game runs on
+    // the glasses): pick them up here rather than on a focus event that the
+    // projected window never receives.
+    if (settingsPath_[0] != '\0' && settingsSeen_ != settingsGeneration_.load()) {
+        loadSettings();
+        syncMusic();
+    }
     if (dt > 0.05f) dt = 0.05f;   // clamp huge hitches
     animTime_ += dt;
 
