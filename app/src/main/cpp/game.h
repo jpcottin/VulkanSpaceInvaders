@@ -236,6 +236,7 @@ public:
     void reloadFromDisk();
     // Process-death save/restore (see SavedGame in main.cpp).
     bool isMidGame() const { return state_ == PLAYING || state_ == LEVEL_CLEAR; }
+    int  saveLevel() const;
     void restoreSession(int level, long score, int lives);
     void setHapticCallback(std::function<void()> fn) { haptic_ = std::move(fn); }
 

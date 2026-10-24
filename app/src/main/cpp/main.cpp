@@ -140,7 +140,7 @@ static void handle_cmd(android_app* app, int32_t cmd) {
         case APP_CMD_SAVE_STATE:
             if (e->game.isMidGame()) {
                 auto* s = (SavedGame*)malloc(sizeof(SavedGame));  // glue frees it
-                *s = {(int32_t)e->game.level(), (int64_t)e->game.score(),
+                *s = {(int32_t)e->game.saveLevel(), (int64_t)e->game.score(),
                       (int32_t)e->game.lives()};
                 app->savedState = s;
                 app->savedStateSize = sizeof(SavedGame);
