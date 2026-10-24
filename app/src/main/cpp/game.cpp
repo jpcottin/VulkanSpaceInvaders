@@ -165,6 +165,10 @@ void Game::setGlassesActive(bool v) {
     if (v == glassesActive_) return;
     glassesActive_ = v;
     if (v && audio_) audio_->setSaucer(false);
+    // Handed back mid-round (or the glasses went away): the phone's frozen
+    // round resumes with bombs in the air and the player's eyes still on
+    // the way; the usual post-hit breather covers the switch.
+    if (!v && state_ == PLAYING) invuln_ = std::max(invuln_, 1.5f);
     syncMusic();
 }
 
@@ -545,6 +549,11 @@ void Game::spawnSaucer() {
     saucer_.alive = true;
 }
 
+// The animation clock wraps every 1000 turns of 2π: every sinf(animTime_ * k)
+// with an integer k continues seamlessly, and a float that only grew would
+// lose the per-frame step after a day on the title screen.
+static constexpr float kAnimWrap = 6283.1853f;
+
 void Game::update(float dt) {
     // Another instance saved the settings (the phone, while the game runs on
     // the glasses): pick them up here rather than on a focus event that the
@@ -555,6 +564,7 @@ void Game::update(float dt) {
     }
     if (dt > 0.05f) dt = 0.05f;   // clamp huge hitches
     animTime_ += dt;
+    if (animTime_ > kAnimWrap) animTime_ -= kAnimWrap;
 
     // Particles and explosions animate in all states.
     // Drag is exponential decay, normalized to a 60 Hz reference so debris

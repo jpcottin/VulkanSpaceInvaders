@@ -285,6 +285,7 @@ public:
     void  setShipXForTest(float x)      { shipX_ = x; }
     void  clearInvulnForTest()          { invuln_ = 0.0f; }
     float invulnForTest()         const { return invuln_; }
+    float animTimeForTest()       const { return animTime_; }
     void  setLivesForTest(int n)        { lives_ = n; }
     float shakeForTest()          const { return shakeAmt_; }
     long  bonusFlashForTest()     const { return bonusFlash_; }
