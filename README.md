@@ -166,7 +166,7 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
   equivalent.
 - **AI Glasses (Android XR projected)** — the glasses expose a secondary
   display (`ProjectionDisplay`, 30 Hz) owned by a virtual device. A ~70-line
-  Kotlin bridge (`GlassesBridge.kt`, with `GlassesGameActivity.kt` the repo's only production JVM code) uses
+  Kotlin bridge (`GlassesBridge.kt`; with `GameActivity.kt`, the immersive phone activity, and `GlassesGameActivity.kt` it is the repo's only production JVM code) uses
   `androidx.xr.projected` to observe pairing (`isProjectedDeviceConnected`)
   and to launch `GlassesGameActivity` — a second `NativeActivity` declared
   with `requiredDisplayCategory="xr_projected"` — onto that display. The
@@ -202,7 +202,7 @@ android run --apks app/build/outputs/apk/debug/app-debug.apk
 
 # Or with adb
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n com.jpcottin.vulkanspaceinvaders/android.app.NativeActivity
+adb shell am start -n com.jpcottin.vulkanspaceinvaders/.GameActivity
 ```
 
 Requires a device with a Vulkan driver (API 24+).

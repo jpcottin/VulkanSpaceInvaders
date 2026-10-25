@@ -209,7 +209,7 @@ boot_and_play() {
   echo "RUN $N app pid after boot/restore: ${RUN_PID:-none}"
   echo "cycle $N: ${RUN_PID:-none}" >> "$OUT/pids.txt"
   if [ "$N" = 1 ]; then
-    A shell am start -n "$PKG/android.app.NativeActivity" >/dev/null 2>&1 || true
+    A shell am start -n "$PKG/com.jpcottin.vulkanspaceinvaders.GameActivity" >/dev/null 2>&1 || true
   elif [ -z "$RUN_PID" ]; then
     # Deliberately NOT relaunched, same as the CI job this replays: the
     # question is whether the snapshot brings the app back by itself, and a

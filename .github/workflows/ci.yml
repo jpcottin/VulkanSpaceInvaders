@@ -719,7 +719,7 @@ jobs:
             if [ "$N" = "1" ]; then
               # The only launch in the whole job. The TITLE screen needs one tap
               # to start a round -- auto-play only pilots during PLAYING.
-              adb shell am start -n "$PKG/android.app.NativeActivity" || true
+              adb shell am start -n "$PKG/com.jpcottin.vulkanspaceinvaders.GameActivity" || true
               for _ in $(seq 1 30); do
                 timeout 15 adb shell dumpsys window 2>/dev/null | grep -qi "ocus.*vulkanspaceinvaders" && break
                 sleep 1
@@ -943,7 +943,7 @@ jobs:
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           export PATH="$SDK/platform-tools:$PATH"
           PKG=com.jpcottin.vulkanspaceinvaders
-          ACT=android.app.NativeActivity
+          ACT=com.jpcottin.vulkanspaceinvaders.GameActivity
           APK=app/build/outputs/apk/debug/app-debug.apk
           WS="${{ github.workspace }}"
           mkdir -p "$WS/screenshots"
