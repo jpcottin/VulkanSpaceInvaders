@@ -18,7 +18,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.VulkanSpaceInvaders">
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".GameActivity"
             android:exported="true"
             android:screenOrientation="portrait"
             android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|density|uiMode">

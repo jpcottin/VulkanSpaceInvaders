@@ -1,6 +1,6 @@
 package com.jpcottin.vulkanspaceinvaders
 
-import android.app.NativeActivity
+import android.view.WindowInsets
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -8,6 +8,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import android.graphics.Bitmap
 import android.os.ParcelFileDescriptor
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -38,7 +39,7 @@ class SmokeTest {
         // ActivityScenarioRule, which starts it before the test body runs.)
         shell("logcat -c")
 
-        ActivityScenario.launch(NativeActivity::class.java).use { scenario ->
+        ActivityScenario.launch(GameActivity::class.java).use { scenario ->
             // Poll for the first PRESENTED frame instead of a fixed sleep: the
             // software-rasterized CI legs (swiftshader/lavapipe) can take well
             // over any single guess. "Swapchain ready" only means the swapchain
@@ -59,7 +60,7 @@ class SmokeTest {
 
             val state = scenario.state
             assertEquals(
-                "NativeActivity should be RESUMED after Vulkan init, but was $state",
+                "GameActivity should be RESUMED after Vulkan init, but was $state",
                 Lifecycle.State.RESUMED,
                 state
             )
@@ -74,6 +75,15 @@ class SmokeTest {
                     log.lines().takeLast(20).joinToString("\n"),
                 log.contains("First frame presented")
             )
+
+            // The game runs immersive: the navigation bar must not sit over the
+            // control strip (with targetSdk 35+ the window spans the display).
+            scenario.onActivity { a ->
+                val insets = a.window.decorView.rootWindowInsets
+                assertFalse("navigation bar still visible over the game",
+                    insets.isVisible(WindowInsets.Type.navigationBars()))
+                assertEquals(0, insets.getInsets(WindowInsets.Type.systemBars()).bottom)
+            }
 
             // Screenshot the verified foreground moment for CI: screencap runs
             // as the shell user and /data/local/tmp survives the post-test
