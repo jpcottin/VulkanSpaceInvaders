@@ -1075,6 +1075,52 @@ TEST(Glasses, HandBackOnTheTitleGrantsNothing) {
     EXPECT_FLOAT_EQ(g.invulnForTest(), 0.0f);
 }
 
+// The phone freezes the round while its window has no focus (the shade, a
+// call, another split-screen pane); the focus coming back resumes it.
+TEST(Focus, ARoundResumesBehindTheBreather) {
+    Game g;
+    startPlaying(g);
+    step(g, 1.5f);                              // level-start grace used up
+    g.clearInvulnForTest();
+    g.spawnTestBomb(0.0f, 0.50f, 0.6f);         // frozen just above the ship
+    g.onFocusGained();
+    EXPECT_GE(g.invulnForTest(), 1.4f);
+    step(g, 0.5f);
+    EXPECT_EQ(g.lives(), 3) << "the frozen bomb landed on a player still looking up";
+}
+
+TEST(Focus, ARoundPausedUnderSettingsResumesBehindTheBreatherToo) {
+    Game g;
+    startPlaying(g);
+    step(g, 1.5f);
+    g.clearInvulnForTest();
+    g.spawnTestBomb(0.0f, 0.50f, 0.6f);
+    tap(g, pxOf(aspect() - 0.062f), pyOf(-0.82f));   // gear
+    g.update(0.016f);
+    ASSERT_TRUE(g.inSettingsForTest());
+    g.onFocusGained();                          // focus came back under Settings
+    tap(g, pxOf(0.0f), pyOf(0.66f));            // BACK
+    g.update(0.016f);
+    ASSERT_TRUE(g.isPlayingForTest());
+    EXPECT_GE(g.invulnForTest(), 1.4f);
+    step(g, 0.5f);
+    EXPECT_EQ(g.lives(), 3);
+}
+
+TEST(Focus, TheTitleAndTheEndScreenGetNothing) {
+    Game g;
+    g.setViewport(kW, kH);
+    g.onFocusGained();
+    EXPECT_FLOAT_EQ(g.invulnForTest(), 0.0f);
+    startPlaying(g);
+    g.setFormationYForTest(0.72f);              // invasion: game over
+    g.update(0.016f);
+    ASSERT_TRUE(g.isGameOverForTest());
+    g.clearInvulnForTest();
+    g.onFocusGained();
+    EXPECT_FLOAT_EQ(g.invulnForTest(), 0.0f);
+}
+
 TEST(Timers, TheAnimationClockStaysBounded) {
     Game g;
     g.setViewport(kW, kH);
