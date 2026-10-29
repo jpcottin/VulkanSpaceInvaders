@@ -166,11 +166,20 @@ void Game::setGlassesActive(bool v) {
     glassesActive_ = v;
     if (v && audio_) audio_->setSaucer(false);
     // Handed back mid-round (or the glasses went away): the phone's frozen
-    // round resumes with bombs in the air and the player's eyes still on
-    // the way; the usual post-hit breather covers the switch.
-    State s = (state_ == SETTINGS) ? prevState_ : state_;
-    if (!v && s == PLAYING) invuln_ = std::max(invuln_, 1.5f);
+    // round resumes with bombs in the air.
+    if (!v) grantResumeBreather();
     syncMusic();
+}
+
+void Game::onFocusGained() { grantResumeBreather(); }
+
+// Bombs in the air and the player's eyes still on the way: the usual
+// post-hit breather covers the switch. A round paused under Settings counts
+// (it resumes the moment BACK is tapped). Never shortens a grace already
+// running, such as the one a fresh level starts with.
+void Game::grantResumeBreather() {
+    State s = (state_ == SETTINGS) ? prevState_ : state_;
+    if (s == PLAYING) invuln_ = std::max(invuln_, 1.5f);
 }
 
 void Game::onPointerDown(int id, float x, float y) {

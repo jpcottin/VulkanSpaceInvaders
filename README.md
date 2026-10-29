@@ -211,7 +211,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-152 tests covering the formation (rows per level, march direction, edge
+155 tests covering the formation (rows per level, march direction, edge
 reversal + descent, speed-up as the wave thins, side-margin containment),
 invasion game-over (even through an active shield), alien-ship collision,
 touch-strip ship control (steer, stop-on-finger, clamping, zone boundaries),
@@ -242,8 +242,9 @@ caught; the idle-screen flag per state and during a glasses session; the tally
 reset by a new game), and the AI-Glasses
 integration (touchbar steer/fire from anywhere, strip-mode isolation, no gear on
 glasses, pure-black clear, settings row launch/inert/exit behaviour, phone
-gameplay freeze during a glasses session). Run on a connected device or
-emulator:
+gameplay freeze during a glasses session), and the resume breather a frozen
+round gets back (the window's focus returning, also under Settings; nothing
+on the title or an end screen). Run on a connected device or emulator:
 
 ```bash
 # ARM device (default)
@@ -312,8 +313,8 @@ reports its findings without ever blocking a PR.
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs the 152 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
-| **Host tests** | Builds `game.cpp` and the same 152 Google Test cases with the host compiler and runs them, no emulator | — |
+| **Native Tests** | Runs the 155 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Host tests** | Builds `game.cpp` and the same 155 Google Test cases with the host compiler and runs them, no emulator | — |
 | **Auto Play bench** | Builds `game.cpp` on the host and plays 300 portrait and 100 landscape seeded campaigns with the autopilot; fails when fewer than 95% are won | — |
 | **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators. The test waits up to 60 s for the renderer to log `First frame presented`, asserts the activity is RESUMED and captures that frame with `screencap`, which the job pulls as the screenshot artifact, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking legs on API 37.0, 37.1 and 37.2 (`google_apis_ps16k`, 16 KB pages) across the lavapipe and auto GPU backends, from both the stable and canary channels | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
 | **Android CLI experiment** | Drives the same instrumented test through the `android` CLI — SDK install, AVD creation, boot and teardown — instead of `sdkmanager`/`avdmanager` plus the emulator-runner action | `cli-smoke-*`; `instrumented-test-report-android-cli-experiment-*` on failure |

@@ -59,6 +59,12 @@ public:
     // process-wide session flag while the game runs on the glasses.
     void setGlassesConnected(bool v) { glassesConnected_ = v; }
     void setGlassesActive(bool v);
+    // The window got its focus back (the shade went up, the call ended, the
+    // other split-screen pane was left): the platform layer froze the round
+    // meanwhile, and it resumes behind the same breather as a hand-back from
+    // the glasses, so a bomb frozen mid-air does not land on a player whose
+    // finger and eyes are still on their way back.
+    void onFocusGained();
     void setGlassesLaunchCallback(std::function<bool()> fn) { glassesLaunch_ = std::move(fn); }
     void setGlassesExitCallback(std::function<void()> fn)   { glassesExit_ = std::move(fn); }
 
@@ -192,6 +198,9 @@ private:
     void mergeDiskHighScores();
     // Push soundEnabled_ + the current state into the audio engine's music flag.
     void syncMusic();
+    // A frozen round resumes (handed back from the glasses, focus regained):
+    // the usual post-hit breather covers the switch.
+    void grantResumeBreather();
     void updateAutoPlay(float dt);
     // The auto-play AI's pick among the invaders (see game.cpp).
     struct AlienTarget {
