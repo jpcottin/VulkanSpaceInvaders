@@ -66,7 +66,9 @@ static const float kTierCol[3][3] = {
 };
 
 // High-score podium colours (gold/silver/bronze), shared by the title table
-// and the rank digit on the game-over/win screens.
+// and the rank digit on the game-over/win screens. A rank below the podium
+// takes the ship's body cyan instead.
+static const float kShipCol[3] = {0.28f, 0.72f, 0.92f};
 static const float kPodiumCol[3][3] = {
     {1.00f, 0.85f, 0.20f},   // gold
     {0.78f, 0.82f, 0.92f},   // silver
@@ -1673,7 +1675,7 @@ void Game::drawShip(std::vector<DrawCmd>& out, float cx, float cy, float scale,
     emit(out, SHAPE_SHIP_WINGS, cx, cy, scale, scale, tilt,
          0.22f, 0.42f, 0.65f, alpha);
     emit(out, SHAPE_SHIP_BODY, cx, cy, scale, scale, tilt,
-         0.28f, 0.72f, 0.92f, alpha);
+         kShipCol[0], kShipCol[1], kShipCol[2], alpha);
     emit(out, SHAPE_SHIP_NOSE, cx, cy, scale, scale, tilt,
          0.88f, 0.97f, 1.00f, alpha);
 }
@@ -2108,12 +2110,14 @@ void Game::drawEndScreen(std::vector<DrawCmd>& out, float pulse, const float tin
     // Gold pulsing score if new high score, plain otherwise
     float sg = newHighScore_ ? scoreG : plainG, sb = newHighScore_ ? scoreB : plainB;
     drawNumber(out, score_, firstCx, -0.05f, fh, 1.0f, sg, sb, 1.0f);
-    // Rank digit above score when it's a new high score
-    if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < 3) {
+    // Rank digit above the score for every new table entry: podium colours
+    // for the top three, the ship's cyan for a 4 or 5. The score already
+    // pulses gold for those ranks, so a missing digit read as a glitch.
+    if (newHighScore_ && newHighScoreRank_ >= 0 && newHighScoreRank_ < kMaxScores) {
         int ri = newHighScoreRank_;
-        drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f,
-                  kPodiumCol[ri][0], kPodiumCol[ri][1], kPodiumCol[ri][2],
-                  0.65f + 0.35f * pulse);
+        float rr = kShipCol[0], rg = kShipCol[1], rb = kShipCol[2];
+        if (ri < 3) { rr = kPodiumCol[ri][0]; rg = kPodiumCol[ri][1]; rb = kPodiumCol[ri][2]; }
+        drawDigit(out, ri + 1, 0.0f, -0.42f, 0.14f, rr, rg, rb, 0.65f + 0.35f * pulse);
     }
     drawShip(out, 0.0f, 0.5f, 0.05f, 0.0f, 0.3f + 0.6f * pulse);
 }

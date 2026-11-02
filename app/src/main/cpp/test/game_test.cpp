@@ -2035,6 +2035,51 @@ TEST(HighScores, OversizedCountIsClampedToTheTable) {
     remove(path);
 }
 
+// A run that lands below the podium is still a new table entry: the score
+// pulses gold, so the rank digit above it must be there too, in the ship's
+// cyan rather than a podium colour. Digit 4 is four segment quads.
+TEST(HighScores, EndScreenNamesARankBelowThePodium) {
+    const char* dir = scratchDir();
+    char path[512];
+    snprintf(path, sizeof(path), "%s/highscores.bin", dir);
+    // "SINV", a full-size record (a short one is ignored) holding a podium of three.
+    unsigned char buf[8 + 16 * Game::kMaxScores] = {};
+    uint32_t magic = 0x53494E56u, count = 3;
+    memcpy(buf, &magic, 4); memcpy(buf + 4, &count, 4);
+    for (int i = 0; i < 3; i++) {
+        int64_t s = 3000 - 1000 * i; int32_t lvl = 1;
+        memcpy(buf + 8 + 16 * i, &s, 8); memcpy(buf + 16 + 16 * i, &lvl, 4);
+    }
+    writeBytes(path, buf, sizeof(buf));
+
+    Game g; g.setViewport(kW, kH); g.setDataPath(dir);
+    g.triggerNewGameForTest();
+    g.setScoreForTest(500);
+    for (int hit = 0; hit < 3; hit++) {
+        g.clearInvulnForTest();
+        g.spawnTestBomb(g.shipX(), 0.50f, 0.6f);
+        step(g, 0.6f);
+    }
+    ASSERT_TRUE(g.isGameOverForTest());
+    EXPECT_TRUE(g.newHighScoreForTest());
+    EXPECT_EQ(g.newHighScoreRankForTest(), 3);
+    EXPECT_EQ(g.highScoreForTest(3), 500L);
+    step(g, 1.0f);                                 // shake settled: ty is the layout y
+
+    std::vector<DrawCmd> cmds;
+    g.render(cmds);
+    int cyanSegments = 0;
+    for (const auto& c : cmds) {
+        if (c.shape != SHAPE_QUAD) continue;
+        if (fabsf(c.color[0] - 0.28f) > 0.01f || fabsf(c.color[1] - 0.72f) > 0.01f ||
+            fabsf(c.color[2] - 0.92f) > 0.01f) continue;
+        if (fabsf(c.ty + 0.42f) > 0.08f) continue;    // the digit sits above the score
+        cyanSegments++;
+    }
+    EXPECT_EQ(cyanSegments, 4) << "rank 4 digit missing from the end screen";
+    remove(path);
+}
+
 // ── Music ─────────────────────────────────────────────────────────────────────
 // The stub audio engine records the last music flag the game pushed.
 

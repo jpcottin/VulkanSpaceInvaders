@@ -304,6 +304,7 @@ public:
     float bonusFlashXForTest()    const { return bonusFlashX_; }
     float bonusFlashYForTest()    const { return bonusFlashY_; }
     bool  newHighScoreForTest()   const { return newHighScore_; }
+    int   newHighScoreRankForTest() const { return newHighScoreRank_; }
     float bombXForTest(int i)     const { return bombs_[i].x; }
     float bombYForTest(int i)     const { return bombs_[i].y; }
     float bombVxForTest(int i)    const { return bombs_[i].vx; }

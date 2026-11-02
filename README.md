@@ -92,8 +92,9 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
   (top-right) · active power-ups with timer bars (left edge).
 - **Ship banking:** the ship tilts ±20° into its direction of travel.
 - **High scores:** top-5 leaderboard persisted locally; gold/silver/bronze
-  podium on the title screen; gold pulsing score + rank medal on game over
-  when a new record is set.
+  podium on the title screen; gold pulsing score + rank digit on game over
+  for every new table entry (podium colours for the top three, the ship's
+  cyan for a 4 or 5).
 - **Screen shake** on ship hits; the HUD stays stable.
 - **Haptic feedback** (50 ms vibration) on ship hit.
 - **Sound:** all effects synthesised in real time — laser sweeps, explosion
@@ -211,7 +212,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-155 tests covering the formation (rows per level, march direction, edge
+156 tests covering the formation (rows per level, march direction, edge
 reversal + descent, speed-up as the wave thins, side-margin containment),
 invasion game-over (even through an active shield), alien-ship collision,
 touch-strip ship control (steer, stop-on-finger, clamping, zone boundaries),
@@ -228,7 +229,8 @@ end-screen grace tap + title-return cleanup), process-death session restore
 (bounds-checked resume of level/score/lives), the settings state machine (gear
 tap, toggles, back button, persistence across instances), high-score
 persistence (cross-instance disk merge, exact-duplicate skip, reload-from-disk
-handoff, zero-score guard), the Auto Play AI (autonomous fire, bomb dodging,
+handoff, zero-score guard, the end-screen rank digit for an entry below the
+podium), the Auto Play AI (autonomous fire, bomb dodging,
 just-in-time power-up interception, saucer lead-aiming, column targeting — edge
 columns under descent pressure, nearest column without, bottom row when it is
 about to land — shots of opportunity, laser accounting — no second laser at an
@@ -313,8 +315,8 @@ reports its findings without ever blocking a PR.
 | Job | What it does | Artifacts |
 |-----|-------------|-----------|
 | **Build APK** | Compiles the debug APK | `debug-apk` |
-| **Native Tests** | Runs the 155 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
-| **Host tests** | Builds `game.cpp` and the same 155 Google Test cases with the host compiler and runs them, no emulator | — |
+| **Native Tests** | Runs the 156 Google Test cases on x86\_64 emulators (API 34 + API 36) | — |
+| **Host tests** | Builds `game.cpp` and the same 156 Google Test cases with the host compiler and runs them, no emulator | — |
 | **Auto Play bench** | Builds `game.cpp` on the host and plays 300 portrait and 100 landscape seeded campaigns with the autopilot; fails when fewer than 95% are won | — |
 | **Smoke Test** | Runs the Android instrumented test on x86\_64 emulators. The test waits up to 60 s for the renderer to log `First frame presented`, asserts the activity is RESUMED and captures that frame with `screencap`, which the job pulls as the screenshot artifact, so a dead Vulkan path fails loudly. Blocking on API 34 + 36; non-blocking legs on API 37.0, 37.1 and 37.2 (`google_apis_ps16k`, 16 KB pages) across the lavapipe and auto GPU backends, from both the stable and canary channels | `smoke-screenshot-api*`, `smoke-test-results-api*`, `smoke-logcat-api*` (suffixed per leg) |
 | **Android CLI experiment** | Drives the same instrumented test through the `android` CLI — SDK install, AVD creation, boot and teardown — instead of `sdkmanager`/`avdmanager` plus the emulator-runner action | `cli-smoke-*`; `instrumented-test-report-android-cli-experiment-*` on failure |
