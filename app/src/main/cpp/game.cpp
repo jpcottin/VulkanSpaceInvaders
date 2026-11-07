@@ -678,6 +678,10 @@ void Game::update(float dt) {
             // killing the mothership, which jumps straight to WIN in
             // updateBullets. There is always a next level to start here.
             stateTimer_ += dt;
+            // A bonus dropped by the last kill keeps falling (and can still be
+            // caught) instead of hanging frozen until the battlefield reset
+            // wipes it, and the active bonus clocks keep running.
+            updatePowerUps(dt);
             if (stateTimer_ >= 1.8f) startLevel(level_ + 1);
             break;
         }
