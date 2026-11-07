@@ -149,7 +149,7 @@ jobs:
             gpu: lavapipe
             ram-size: 4096M
             cores: 4
-            disk-size: 8192M
+            disk-size: 4096M
             experimental: true
             extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
           - api-level: '37.0'
@@ -159,7 +159,7 @@ jobs:
             gpu: lavapipe
             ram-size: 4096M
             cores: 4
-            disk-size: 8192M
+            disk-size: 4096M
             experimental: true
             extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
           - api-level: '37.0'
@@ -169,7 +169,7 @@ jobs:
             gpu: auto
             ram-size: 4096M
             cores: 4
-            disk-size: 8192M
+            disk-size: 4096M
             experimental: true
             extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
           - api-level: '37.1'
@@ -179,7 +179,7 @@ jobs:
             gpu: lavapipe
             ram-size: 4096M
             cores: 4
-            disk-size: 8192M
+            disk-size: 4096M
             experimental: true
             extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
           - api-level: '37.1'
@@ -189,7 +189,7 @@ jobs:
             gpu: auto
             ram-size: 4096M
             cores: 4
-            disk-size: 8192M
+            disk-size: 4096M
             experimental: true
             extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
           - api-level: '37.2'
@@ -199,7 +199,7 @@ jobs:
             gpu: lavapipe
             ram-size: 4096M
             cores: 4
-            disk-size: 8192M
+            disk-size: 4096M
             experimental: true
             extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
           - api-level: '37.2'
@@ -209,7 +209,7 @@ jobs:
             gpu: auto
             ram-size: 4096M
             cores: 4
-            disk-size: 8192M
+            disk-size: 4096M
             experimental: true
             extra-options: -no-snapshot -camera-back none -memory 4096 -delay-adb
 
@@ -377,7 +377,7 @@ jobs:
           set_ini PlayStore.enabled false
           set_ini hw.ramSize 4096
           set_ini hw.cpu.ncore 4
-          set_ini disk.dataPartition.size 8192M
+          set_ini disk.dataPartition.size 4096M
           # Optional plural tag keys, if the profile wrote them, must not keep
           # claiming the playstore image.
           if grep -q '^tag.ids=' "$CFG"; then sed -i 's/^tag.ids=.*/tag.ids=google_apis,page_size_16kb/' "$CFG"; fi
@@ -923,7 +923,7 @@ jobs:
           set_ini PlayStore.enabled false
           set_ini hw.ramSize 4096
           set_ini hw.cpu.ncore 4
-          set_ini disk.dataPartition.size 8192M
+          set_ini disk.dataPartition.size 4096M
           if grep -q '^tag.ids=' "$CFG"; then sed -i 's/^tag.ids=.*/tag.ids=google_apis,page_size_16kb/' "$CFG"; fi
           if grep -q '^tag.displaynames=' "$CFG"; then sed -i 's/^tag.displaynames=.*/tag.displaynames=Google APIs,16 KB Page Size/' "$CFG"; fi
           echo "DEVICE=$DEVICE" >> "$GITHUB_ENV"

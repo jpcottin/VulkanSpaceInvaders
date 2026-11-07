@@ -212,7 +212,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-156 tests covering the formation (rows per level, march direction, edge
+158 tests covering the formation (rows per level, march direction, edge
 reversal + descent, speed-up as the wave thins, side-margin containment),
 invasion game-over (even through an active shield), alien-ship collision,
 touch-strip ship control (steer, stop-on-finger, clamping, zone boundaries),
@@ -221,7 +221,8 @@ per-tier kill scoring, bombs (drop cadence, concurrency cap, ship hits,
 invulnerability window, shoot-down), the saucer (crossing, despawn, bonus
 payout, suppression during the boss fight), power-ups (pickup, shield absorb,
 shield persistence, rapid-fire cooldown + expiry, triple-shot volley count +
-exact ±8° angles + expiry, uncollected fall-through), the level-10 boss (spawn +
+exact ±8° angles + expiry, uncollected fall-through, a bonus still falling
+through the level-clear interlude and the bonus clocks running there), the level-10 boss (spawn +
 HP, sine drift, aimed bombs, escort-doesn't-clear rule, kill-to-win payout, Auto
 Play targeting — escort first), level progression (level-scaled clear bonus, in-flight-bomb
 wipe on clear, level clamp at 10, boss handoff, game over on zero lives,

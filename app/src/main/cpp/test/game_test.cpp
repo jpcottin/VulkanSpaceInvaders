@@ -1977,6 +1977,41 @@ TEST(PowerUps, UncollectedFallsPastWithoutEffect) {
     EXPECT_EQ(g.score(), before);              // and never scored
 }
 
+// The last kill of a wave can drop a bonus. The "LEVEL CLEAR" interlude must
+// not hang it in mid-air (and then wipe it with the battlefield): it keeps
+// falling and can still be caught.
+TEST(PowerUps, KeepsFallingThroughTheLevelClearInterlude) {
+    Game g;
+    startPlaying(g);
+    // A quarter of the screen above the ship: on it in under a second.
+    g.spawnTestPowerUp(g.shipX(), 0.58f - 0.25f, (int)Game::PU_RAPID);
+    for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
+    g.update(1.0f / 60.0f);
+    ASSERT_TRUE(g.isLevelClearForTest());
+    long afterClearBonus = g.score();
+    step(g, 1.0f);                              // still inside the interlude
+    ASSERT_TRUE(g.isLevelClearForTest());
+    EXPECT_TRUE(g.rapidActiveForTest());        // caught, and granted
+    EXPECT_EQ(g.score() - afterClearBonus, 25L * g.level());
+}
+
+// An active bonus's clock keeps running through the interlude too: a rapid
+// fire picked up just before the clear does not get the pause for free.
+TEST(PowerUps, BonusTimersRunThroughTheInterlude) {
+    Game g;
+    startPlaying(g);
+    g.activatePowerUpForTest((int)Game::PU_RAPID);
+    for (int i = 0; i < g.alienTotalForTest(); i++) g.killAlienForTest(i);
+    g.update(1.0f / 60.0f);
+    ASSERT_TRUE(g.isLevelClearForTest());
+    step(g, 2.0f);                              // through the 1.8 s interlude
+    ASSERT_TRUE(g.isPlayingForTest());
+    ASSERT_EQ(g.level(), 2);
+    g.setFormationYForTest(-3.0f);              // the next wave out of the way
+    step(g, 6.5f);                              // 8.5 s since the pickup, 8 s long
+    EXPECT_FALSE(g.rapidActiveForTest());
+}
+
 // ── High-score file robustness ────────────────────────────────────────────────
 // The loader must ignore a file it cannot trust and keep the in-memory table.
 
