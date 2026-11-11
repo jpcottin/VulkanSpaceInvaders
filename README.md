@@ -88,7 +88,8 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
   across the top (health bar + "MOTHERSHIP" label), lobbing bombs **aimed at
   you**, guarded by a two-row escort wave. Clearing the escort isn't enough — only
   destroying the mothership wins the game (+250 pts ×level).
-- **HUD:** score (top-left) · lives as mini-ships (top-center) · level
+- **HUD:** score (top-left) · lives as mini-ships (top-center, stepping
+  aside once a five-digit score needs the room) · level
   (top-right) · active power-ups with timer bars (left edge).
 - **Ship banking:** the ship tilts ±20° into its direction of travel.
 - **High scores:** top-5 leaderboard persisted locally; gold/silver/bronze
@@ -212,7 +213,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-158 tests covering the formation (rows per level, march direction, edge
+159 tests covering the formation (rows per level, march direction, edge
 reversal + descent, speed-up as the wave thins, side-margin containment),
 invasion game-over (even through an active shield), alien-ship collision,
 touch-strip ship control (steer, stop-on-finger, clamping, zone boundaries),
@@ -226,7 +227,8 @@ through the level-clear interlude and the bonus clocks running there), the level
 HP, sine drift, aimed bombs, escort-doesn't-clear rule, kill-to-win payout, Auto
 Play targeting — escort first), level progression (level-scaled clear bonus, in-flight-bomb
 wipe on clear, level clamp at 10, boss handoff, game over on zero lives,
-end-screen grace tap + title-return cleanup), process-death session restore
+end-screen grace tap + title-return cleanup, the lives stepping aside for a
+five-digit score), process-death session restore
 (bounds-checked resume of level/score/lives), the settings state machine (gear
 tap, toggles, back button, persistence across instances), high-score
 persistence (cross-instance disk merge, exact-duplicate skip, reload-from-disk

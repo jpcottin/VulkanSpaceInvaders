@@ -1638,6 +1638,61 @@ TEST(Render, EndScreenScoreFitsTheScreen) {
     }
 }
 
+// HUD: the score sits top-left at a fixed glyph size and the lives are
+// centred, so on a portrait phone a five-digit score (level 4 or so) ran its
+// last digit into the first life icon. The lives step aside for it, and stay
+// put while there is room.
+static void hudExtents(const std::vector<DrawCmd>& cmds, float& scoreRight,
+                       float& livesLeft, float& livesRight, float& livesMid,
+                       float& levelLeft) {
+    scoreRight = -2.0f; livesLeft = 2.0f; livesRight = -2.0f; levelLeft = 2.0f;
+    float sum = 0.0f; int ships = 0;
+    for (const auto& c : cmds) {
+        if (fabsf(c.ty + 0.90f) > 0.06f) continue;          // the HUD row
+        if (c.shape == SHAPE_QUAD) {
+            float right = c.tx + fabsf(c.mtx[0]), left = c.tx - fabsf(c.mtx[0]);
+            bool white  = c.color[0] > 0.99f && c.color[1] > 0.99f && c.color[2] > 0.99f;
+            bool yellow = c.color[0] > 0.99f && fabsf(c.color[1] - 0.85f) < 0.01f;
+            if (white  && right > scoreRight) scoreRight = right;
+            if (yellow && left  < levelLeft)  levelLeft  = left;
+        } else if (c.shape == SHAPE_SHIP_WINGS) {           // wing tips at x = ±1
+            float left = c.tx - fabsf(c.mtx[0]), right = c.tx + fabsf(c.mtx[0]);
+            if (left  < livesLeft)  livesLeft  = left;
+            if (right > livesRight) livesRight = right;
+            sum += c.tx; ships++;
+        }
+    }
+    livesMid = ships ? sum / (float)ships : 0.0f;
+}
+
+TEST(Render, TheLivesStayClearOfAFiveDigitScore) {
+    Game g;
+    startPlaying(g);
+    step(g, 0.2f);
+    std::vector<DrawCmd> cmds;
+    float scoreRight, livesLeft, livesRight, livesMid, levelLeft;
+
+    g.setScoreForTest(630);                            // room to spare: centred
+    g.render(cmds);
+    hudExtents(cmds, scoreRight, livesLeft, livesRight, livesMid, levelLeft);
+    EXPECT_NEAR(livesMid, 0.0f, 0.001f);
+    EXPECT_LT(scoreRight, livesLeft);
+
+    g.setScoreForTest(12345);                          // five digits
+    cmds.clear(); g.render(cmds);
+    hudExtents(cmds, scoreRight, livesLeft, livesRight, livesMid, levelLeft);
+    EXPECT_LT(scoreRight, livesLeft) << "the score runs into the first life icon";
+    EXPECT_LT(livesRight, levelLeft);
+
+    g.startLevelForTest(10);                           // two level digits on the right
+    step(g, 0.2f);
+    g.setScoreForTest(98765);
+    cmds.clear(); g.render(cmds);
+    hudExtents(cmds, scoreRight, livesLeft, livesRight, livesMid, levelLeft);
+    EXPECT_LT(scoreRight, livesLeft);
+    EXPECT_LT(livesRight, levelLeft) << "the lives run into the level number";
+}
+
 // ── Process-death resume ────────────────────────────────────────────────────────
 
 TEST(RestoreSession, ResumesLevelScoreAndLives) {

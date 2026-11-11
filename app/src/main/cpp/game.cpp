@@ -2022,9 +2022,20 @@ void Game::render(std::vector<DrawCmd>& out) {
         float levelFirstCx = asp_ - 0.06f - w * 0.5f - (float)(nd - 1) * step;
         drawNumber(out, level_, levelFirstCx, -0.90f, h,
                    1.0f, 0.85f, 0.2f, 1.0f);
-        // lives as small ship icons, top-center
+        // lives as small ship icons, top-centre — stepping aside for the
+        // score: a portrait phone has room for four digits beside centred
+        // lives, and a fifth (level 4 or so) ran into the first icon. They
+        // never pass the level number either; a window too narrow for all
+        // three closes the icons up instead.
         float ls = 0.03f, gap = 0.085f;
+        const float kClear = 0.03f;
+        float scoreRight = -asp_ + 0.06f + w + (float)(numDigits(score_) - 1) * step;
+        float levelLeft  = levelFirstCx - w * 0.5f;
         float startX = -(float)(lives_ - 1) * gap * 0.5f;
+        if (startX - ls < scoreRight + kClear) startX = scoreRight + kClear + ls;
+        float room = levelLeft - kClear - ls - startX;      // for the icons after the first
+        if (lives_ > 1 && room < (float)(lives_ - 1) * gap)
+            gap = room > 0.0f ? room / (float)(lives_ - 1) : 0.0f;
         for (int i = 0; i < lives_; i++)
             drawShip(out, startX + (float)i * gap, -0.90f, ls, 0.0f, 1.0f);
 
