@@ -37,7 +37,7 @@ inputs:
   disk-size:
     description: 'disk.dataPartition.size'
     required: false
-    default: '8192M'
+    default: '4096M'
 
 runs:
   using: composite
