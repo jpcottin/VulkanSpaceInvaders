@@ -510,6 +510,31 @@ TEST(Bombs, ThreeHitsEndTheGame) {
     EXPECT_TRUE(g.isGameOverForTest());
 }
 
+// Nothing is updated on the end screen, so whatever was in flight when the
+// last life went would hang there frozen until the title: it goes with the
+// round. The debris and the flash rings still play out.
+TEST(Bombs, TheEndScreenClearsWhatWasInFlight) {
+    Game g;
+    startPlaying(g);
+    g.setFormationYForTest(-3.0f);             // no aliens in the lane
+    g.setLivesForTest(1);
+    g.clearInvulnForTest();
+    g.spawnTestBomb(0.3f, 0.10f, 0.05f);       // a slow bomb, well off the ship
+    g.spawnTestPowerUp(-0.3f, 0.10f, (int)Game::PU_SHIELD);
+    g.setSaucerForTest(0.0f, 0.35f);
+    g.onPointerDown(0, pxOf(0.0f), ctrlPy());  // one laser, let go before the
+    step(g, 0.25f);                            // fatal bomb enters its lane
+    g.onPointerUp(0);
+    ASSERT_GE(g.bulletCount(), 1);
+    g.spawnTestBomb(g.shipX(), 0.50f, 0.6f);   // the one that lands
+    step(g, 0.3f);                             // the laser is still on screen
+    ASSERT_TRUE(g.isGameOverForTest());
+    EXPECT_EQ(g.bombsForTest(), 0);
+    EXPECT_EQ(g.bulletCount(), 0);
+    EXPECT_EQ(g.powerUpsForTest(), 0);
+    EXPECT_FALSE(g.saucerAliveForTest());
+}
+
 // The frame that kills the last life must not also score: updateBombs runs
 // before updateBullets, and checkHighScore() saves the moment the game ends,
 // so a laser landing later in the same frame would desync score from the
@@ -1898,9 +1923,10 @@ TEST(Progression, TitleReturnClearsLeftovers) {
     ASSERT_GT(g.bombCount(), 0);
     ASSERT_TRUE(g.saucerAliveForTest());
     g.setFormationYForTest(0.72f);
-    g.update(0.016f);                           // invasion freezes the leftovers
+    g.update(0.016f);                           // invasion: game over
     ASSERT_TRUE(g.isGameOverForTest());
-    ASSERT_GT(g.bombCount(), 0);                // still present on the end screen
+    EXPECT_EQ(g.bombCount(), 0);                // gone with the round, not frozen
+    EXPECT_FALSE(g.saucerAliveForTest());
     step(g, 0.7f);
     tap(g, kW * 0.5f, kH * 0.5f);
     g.update(0.016f);
