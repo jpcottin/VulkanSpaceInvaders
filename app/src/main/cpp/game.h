@@ -310,6 +310,7 @@ public:
     float bombVxForTest(int i)    const { return bombs_[i].vx; }
     float bombVyForTest(int i)    const { return bombs_[i].vy; }
     int   bombsForTest()          const { return (int)bombs_.size(); }
+    int   powerUpsForTest()       const { return (int)powerUps_.size(); }
     int   shotsFiredForTest()     const { return shotsFired_; }
     // Trigger ready: cooldown over and below the 3-laser cap (kMaxPlayerBullets).
     bool  fireReadyForTest()      const { return fireCooldown_ <= 0.0f && bulletCount() < 3; }

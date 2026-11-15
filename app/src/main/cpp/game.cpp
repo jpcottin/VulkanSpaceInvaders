@@ -671,6 +671,18 @@ void Game::update(float dt) {
             if (state_ == PLAYING) updatePowerUps(dt);
             removeDeadEntities();
             checkLevelClear();
+            // The round ended this frame (last life, invasion, boss kill):
+            // nothing in flight is updated on the end screen, so the shots,
+            // the bombs, the capsules and the saucer go with it rather than
+            // hang frozen until the title. The debris and the flash rings
+            // play out. Done here, after the update loops, never from inside
+            // one of them.
+            if (state_ == GAME_OVER || state_ == WIN) {
+                bullets_.clear();
+                bombs_.clear();
+                powerUps_.clear();
+                saucer_ = {};
+            }
             break;
         }
         case LEVEL_CLEAR: {
