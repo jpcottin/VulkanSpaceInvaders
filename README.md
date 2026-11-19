@@ -129,7 +129,8 @@ Vulkan swapchain and the world re-lays out from the new aspect ratio).
   glasses row — *PLAY ON GLASSES* hands the whole game to the glasses'
   projected display, where the **touchbar** drives it: finger position steers
   the ship, contact auto-fires. The phone shows an "ON GLASSES" banner and
-  throttles itself; *BACK TO PHONE* (in Settings) brings the game home. With
+  throttles itself; *BACK TO PHONE* (in Settings) brings the game home, and so
+  does a pair that disconnects. With
   nothing paired the row reads *NO GLASSES*.
 
 ## Tech
@@ -213,7 +214,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-160 tests covering the formation (rows per level, march direction, edge
+162 tests covering the formation (rows per level, march direction, edge
 reversal + descent, speed-up as the wave thins, side-margin containment),
 invasion game-over (even through an active shield), alien-ship collision,
 touch-strip ship control (steer, stop-on-finger, clamping, zone boundaries),
@@ -246,7 +247,7 @@ a second and reset by a new level; the bonus flash where the power-up was
 caught; the idle-screen flag per state and during a glasses session; the tally
 reset by a new game), and the AI-Glasses
 integration (touchbar steer/fire from anywhere, strip-mode isolation, no gear on
-glasses, pure-black clear, settings row launch/inert/exit behaviour, phone
+glasses, pure-black clear, settings row launch/inert/exit behaviour, a disconnect ending the session, phone
 gameplay freeze during a glasses session), and the resume breather a frozen
 round gets back (the window's focus returning, also under Settings; nothing
 on the title or an end screen). Run on a connected device or emulator:

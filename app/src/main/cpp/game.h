@@ -56,8 +56,9 @@ public:
 
     // Glasses session plumbing, fed by the platform layer (main.cpp):
     // connection state is polled from the Kotlin bridge; "active" mirrors the
-    // process-wide session flag while the game runs on the glasses.
-    void setGlassesConnected(bool v) { glassesConnected_ = v; }
+    // process-wide session flag while the game runs on the glasses. Glasses
+    // that disconnect during a session end it, as BACK TO PHONE does.
+    void setGlassesConnected(bool v);
     void setGlassesActive(bool v);
     // The window got its focus back (the shade went up, the call ended, the
     // other split-screen pane was left): the platform layer froze the round

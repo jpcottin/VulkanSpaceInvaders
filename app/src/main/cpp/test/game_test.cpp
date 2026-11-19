@@ -1026,6 +1026,40 @@ TEST(Glasses, SettingsRowExitsWhenActive) {
     EXPECT_TRUE(exited);
 }
 
+TEST(Glasses, GlassesThatDisconnectEndTheSession) {
+    Game g;
+    g.setViewport(kW, kH);
+    int exits = 0;
+    g.setGlassesExitCallback([&]() { exits++; });
+    g.setGlassesConnected(true);
+    g.setGlassesActive(true);
+    g.setGlassesConnected(true);                // the same reading again: nothing
+    EXPECT_EQ(exits, 0);
+    g.setGlassesConnected(false);               // the pair went away
+    EXPECT_EQ(exits, 1);
+    g.setGlassesConnected(false);               // once, not on every poll
+    EXPECT_EQ(exits, 1);
+}
+
+TEST(Glasses, ADisconnectOutsideASessionChangesNothing) {
+    Game g;
+    g.setViewport(kW, kH);
+    int exits = 0;
+    g.setGlassesExitCallback([&]() { exits++; });
+    g.setGlassesConnected(true);
+    g.setGlassesConnected(false);               // no session running
+    EXPECT_EQ(exits, 0);
+    // The glasses instance itself never ends a session this way.
+    Game lens;
+    lens.setViewport(kW, kH);
+    lens.setControlMode(Game::CONTROL_TOUCHBAR);
+    lens.setGlassesExitCallback([&]() { exits++; });
+    lens.setGlassesConnected(true);
+    lens.setGlassesActive(true);
+    lens.setGlassesConnected(false);
+    EXPECT_EQ(exits, 0);
+}
+
 TEST(Glasses, PhoneTitleTapIsInertWhileOnGlasses) {
     // The phone shows the hand-off banner over its title: tapping it must not
     // start a game nobody sees.
