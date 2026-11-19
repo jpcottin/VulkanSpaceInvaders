@@ -173,6 +173,16 @@ void Game::setGlassesActive(bool v) {
     syncMusic();
 }
 
+// The glasses went away under a running session (taken off, battery, out of
+// range): without this the phone would keep its round frozen behind the
+// "on glasses" banner for a pair that is no longer there. Only a drop counts:
+// a session that starts while the first poll is still due is left alone.
+void Game::setGlassesConnected(bool v) {
+    bool dropped = glassesConnected_ && !v;
+    glassesConnected_ = v;
+    if (dropped && glassesActive_ && controlMode_ == CONTROL_STRIP && glassesExit_) glassesExit_();
+}
+
 void Game::onFocusGained() { grantResumeBreather(); }
 
 // Bombs in the air and the player's eyes still on the way: the usual
