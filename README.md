@@ -214,7 +214,7 @@ Requires a device with a Vulkan driver (API 24+).
 
 ### Native unit tests (Google Test)
 
-162 tests covering the formation (rows per level, march direction, edge
+163 tests covering the formation (rows per level, starting height per level, march direction, edge
 reversal + descent, speed-up as the wave thins, side-margin containment),
 invasion game-over (even through an active shield), alien-ship collision,
 touch-strip ship control (steer, stop-on-finger, clamping, zone boundaries),

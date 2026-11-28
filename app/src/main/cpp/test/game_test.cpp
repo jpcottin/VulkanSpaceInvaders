@@ -124,6 +124,22 @@ TEST(Levels, MarchSpeedGrowsWithLevel) {
     EXPECT_GT(s5, s1);
 }
 
+// Each level starts the wave lower, 0.03 a level, until level 7; from there on it
+// starts where level 7 did, so the five-row waves of levels 7-9 keep their room.
+TEST(Levels, WaveStartsLowerUpToLevelSeven) {
+    Game g;
+    g.setViewport(kW, kH);
+    float prev = 0.0f;
+    for (int level = 1; level <= 9; level++) {
+        g.startLevelForTest(level);
+        float y = g.formationYForTest();
+        if (level == 1) EXPECT_NEAR(y, -0.66f, 1e-4f);
+        else if (level <= 7) EXPECT_NEAR(y - prev, 0.03f, 1e-4f) << "level " << level;
+        else EXPECT_NEAR(y, -0.48f, 1e-4f) << "level " << level;
+        prev = y;
+    }
+}
+
 TEST(Levels, MarchSpeedGrowsAsWaveThins) {
     Game g;
     startPlaying(g);
